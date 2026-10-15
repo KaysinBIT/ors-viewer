@@ -8,6 +8,10 @@ output/
 tmp/
 .cache/
 .runtime/
+runtime/
+cache/
+logs/
+settings.json
 imported/
 data/
 *.log

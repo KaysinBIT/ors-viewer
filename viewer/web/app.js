@@ -1,5 +1,6 @@
 import { SceneView, parsePacket, labelColor } from './scene.js';
 import { SectionController } from './section.js';
+import { LocalFilePicker } from './file-picker.js';
 
 const $=id=>document.getElementById(id);
 const state={datasets:[],dataset:null,object:null,meta:null,preview:null,filter:'all',request:0,tableStart:0,selectedLabel:0};
@@ -175,7 +176,7 @@ async function showTable(reset=false){
     $('download-csv').hidden=!table.csv_file;if(table.csv_file)$('download-csv').href=objectUrl('download')+'?file='+encodeURIComponent(table.csv_file);
   }catch(error){toast(error.message);}
 }
-function openDialog(){$('add-error').hidden=true;$('add-dialog').showModal();$('folder-path').focus();}
+function openDialog(){$('add-error').hidden=true;$('add-dialog').showModal();$('browse-path').focus();}
 
 function updateSection(distance,commitNumber=false){
   if(!section||!state.preview)return;
@@ -199,7 +200,27 @@ function exportPreview(){
   toast('已导出当前显示网格（剖切仅影响显示，未写入导出）');
 }
 const token=()=>document.querySelector('meta[name=viewer-token]').content;
-function importMode(){const mode=$('import-mode').value;$('path-field').hidden=mode==='file';$('file-field').hidden=mode!=='file';$('folder-path').required=mode!=='file';$('import-file').required=mode==='file';$('path-label').textContent=mode==='directory'?'解析输出目录':'本地文件路径';$('confirm-add').textContent=mode==='directory'?'载入数据':'解析并显示';}
+const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token()},body:JSON.stringify(body)});
+const picker=new LocalFilePicker(post);
+function importMode(){const mode=$('import-mode').value;$('path-field').hidden=mode==='file';$('file-field').hidden=mode!=='file';$('folder-path').value='';$('import-file').required=mode==='file';$('path-label').textContent=mode==='directory'?'解析输出目录':'本地文件路径';$('browse-path').textContent=mode==='directory'?'选择目录':'选择文件';$('folder-path').placeholder=mode==='directory'?'尚未选择解析目录':'尚未选择文件';$('confirm-add').textContent=mode==='directory'?'载入数据':'解析并显示';}
+$('browse-path').onclick=async()=>{
+  const directory=$('import-mode').value==='directory';
+  const path=await picker.open({kind:directory?'directory':'file',title:directory?'选择解析输出目录':'选择本地文件'});
+  if(path)$('folder-path').value=path;
+};
+$('setup-dialog').oncancel=event=>event.preventDefault();
+$('setup-browse').onclick=async()=>{
+  const path=await picker.open({kind:'directory',title:'选择软件数据目录'});
+  if(path){$('setup-path').value=path;$('setup-save').disabled=false;$('setup-error').hidden=true;}
+};
+$('setup-form').onsubmit=async event=>{
+  event.preventDefault();$('setup-save').disabled=true;$('setup-error').hidden=true;
+  try{
+    const settings=await post('/api/settings/data-directory',{path:$('setup-path').value});
+    state.dataDirectory=settings.data_directory;$('setup-dialog').close();await loadCatalog();toast('数据目录已保存，后续启动会自动使用');
+  }catch(error){$('setup-error').textContent=error.message;$('setup-error').hidden=false;}
+  finally{$('setup-save').disabled=!$('setup-path').value;}
+};
 function uploadFile(file){return new Promise((resolve,reject)=>{
   const request=new XMLHttpRequest();request.open('POST','/api/import-upload?name='+encodeURIComponent(file.name));request.setRequestHeader('X-Viewer-Token',token());request.setRequestHeader('Content-Type','application/octet-stream');
   request.upload.onprogress=e=>{if(e.lengthComputable)$('import-progress').textContent=`正在传入本机服务：${Math.round(e.loaded/e.total*100)}%`;};
@@ -254,11 +275,20 @@ $('add-form').onsubmit=async event=>{
   event.preventDefault();$('confirm-add').disabled=true;$('add-error').hidden=true;$('import-progress').hidden=false;$('import-progress').textContent='正在提交导入任务…';
   try{
     const mode=$('import-mode').value;
+    if(mode!=='file'&&!$('folder-path').value.trim())throw new Error(mode==='directory'?'请先点击“选择目录”':'请先点击“选择文件”');
     if(mode==='directory'){const dataset=await api('/api/datasets',{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token()},body:JSON.stringify({path:$('folder-path').value.trim()})});$('add-dialog').close();await loadCatalog(dataset.id);}
     else{const job=mode==='file'?await uploadFile($('import-file').files[0]):await api('/api/imports',{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token()},body:JSON.stringify({path:$('folder-path').value.trim().replace(/^"|"$/g,'')})});await watchImport(job);$('add-dialog').close();}
   }catch(error){$('add-error').textContent=error.message;$('add-error').hidden=false;$('import-progress').hidden=true;}
   finally{$('confirm-add').disabled=false;}
 };
-window.addEventListener('keydown',event=>{if(event.key==='Escape')document.body.classList.remove('inspector-open');if(event.key.toLowerCase()==='f'&&!['INPUT','SELECT','TEXTAREA'].includes(event.target.tagName)){state.faceSection=false;scene?.fit();}});
-loadCatalog().catch(error=>{showError(error.message);$('app-status').textContent='无法连接本地数据服务';});
-const pendingJob=localStorage.getItem('ors-import-job');if(pendingJob){$('confirm-add').disabled=true;api('/api/imports/'+pendingJob).then(watchImport).catch(error=>{localStorage.removeItem('ors-import-job');toast(error.message);}).finally(()=>$('confirm-add').disabled=false);}
+window.addEventListener('keydown',event=>{if(event.key==='Escape')document.body.classList.remove('inspector-open');if(event.key.toLowerCase()==='f'&&!document.querySelector('dialog[open]')&&!['INPUT','SELECT','TEXTAREA'].includes(event.target.tagName)){state.faceSection=false;scene?.fit();}});
+async function initialize(){
+  const settings=await api('/api/settings');state.dataDirectory=settings.data_directory;
+  if(!settings.ready){
+    $('app-status').textContent='首次使用 · 请选择数据目录';$('setup-message').textContent=settings.message||'解析结果、显示缓存和日志将保存在你选择的目录中。';
+    $('setup-dialog').showModal();return;
+  }
+  await loadCatalog();
+  const pendingJob=localStorage.getItem('ors-import-job');if(pendingJob){$('confirm-add').disabled=true;api('/api/imports/'+pendingJob).then(watchImport).catch(error=>{localStorage.removeItem('ors-import-job');toast(error.message);}).finally(()=>$('confirm-add').disabled=false);}
+}
+initialize().catch(error=>{showError(error.message);$('app-status').textContent='无法连接本地数据服务';});

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.2
+
+- Add local file and directory selection buttons with a browsable filesystem picker.
+- Fill selected paths automatically and read source files directly without upload copies.
+- Require explicit data-directory selection on first launch before imports or caches are created.
+- Persist the selected directory, check write access and reopen setup when it becomes unavailable.
+- Support new-folder creation, directory search and existing decoded-directory selection.
+- Update the offline HTML and PDF user manuals for the new setup and import workflow.
+
 ## 0.6.1
 
 - Update clipping planes and volume slices immediately while dragging section controls.

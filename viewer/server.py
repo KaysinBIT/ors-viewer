@@ -18,6 +18,8 @@ import webbrowser
 import numpy as np
 from .preview import PreviewCache, safe_file, unit_of
 from .imports import ImportJobs, EXTENSIONS
+from .file_browser import list_directory, create_directory
+from .settings import validate_directory, save_directory
 
 HERE = Path(__file__).resolve().parent
 WEB = HERE / 'web'
@@ -112,7 +114,7 @@ def download_files(meta):
     return files
 
 
-def handler(catalog, cache, token, imports=None):
+def handler(catalog, cache, token, imports=None, workspace=None):
     class Handler(BaseHTTPRequestHandler):
         def send_headers(self, status=200, mime='application/json; charset=utf-8', length=None):
             self.send_response(status)
@@ -139,16 +141,21 @@ def handler(catalog, cache, token, imports=None):
             try:
                 url = urlsplit(self.path);route = unquote(url.path);q = parse_qs(url.query)
                 if route == '/api/catalog': return self.json({'datasets': catalog.public()})
-                if route == '/api/health': return self.json({'ok': True, 'version': '0.6.1'})
+                if route == '/api/health': return self.json({'ok': True, 'version': '0.6.2'})
+                if route == '/api/settings':
+                    return self.json(workspace.public() if workspace else {'ready': True, 'data_directory': None, 'message': ''})
                 parts = route.strip('/').split('/')
-                if len(parts) == 3 and parts[:2] == ['api', 'imports'] and imports:
-                    return self.json(imports.get(parts[2]))
+                active_imports = workspace.imports if workspace else imports
+                active_cache = workspace.cache if workspace else cache
+                if len(parts) == 3 and parts[:2] == ['api', 'imports'] and active_imports:
+                    return self.json(active_imports.get(parts[2]))
                 if len(parts) >= 3 and parts[:2] == ['api', 'objects']:
                     folder, meta = catalog.get(parts[2])
                     action = parts[3] if len(parts) == 4 else 'metadata'
                     if action == 'metadata': return self.json(meta)
                     if action == 'preview':
-                        path = cache.get(folder, meta, q.get('quality', ['balanced'])[0],
+                        if active_cache is None: raise ValueError('请先设置数据目录')
+                        path = active_cache.get(folder, meta, q.get('quality', ['balanced'])[0],
                                          int(q.get('time', ['0'])[0]), int(q.get('label', ['0'])[0]), float(q.get('retention', ['100'])[0]))
                         return self.file(path)
                     if action == 'table':
@@ -177,11 +184,23 @@ def handler(catalog, cache, token, imports=None):
                     return self.json({'error': '请从本地查看器页面操作'}, 403)
                 url = urlsplit(self.path)
                 size = int(self.headers.get('Content-Length', 0))
-                if url.path == '/api/import-upload' and imports:
+                active_imports = workspace.imports if workspace else imports
+                if url.path in ('/api/filesystem/list', '/api/filesystem/mkdir', '/api/settings/data-directory'):
+                    if not 0 < size <= 8192: raise ValueError('请求大小无效')
+                    body = json.loads(self.rfile.read(size))
+                    if url.path == '/api/filesystem/list':
+                        return self.json(list_directory(body.get('path', ''), body.get('kind', 'file'), body.get('offset', 0), body.get('query', '')))
+                    if url.path == '/api/filesystem/mkdir':
+                        return self.json({'path': create_directory(body['path'], body['name'])})
+                    if workspace is None: raise ValueError('数据目录设置不可用')
+                    workspace.choose(body['path'])
+                    return self.json(workspace.public())
+                if workspace and not workspace.ready: raise ValueError('请先完成首次数据目录设置')
+                if url.path == '/api/import-upload' and active_imports:
                     filename = Path(parse_qs(url.query).get('name', [''])[0]).name
                     if Path(filename).suffix.lower() not in EXTENSIONS: raise ValueError('不支持该文件类型')
                     if not 0 < size <= 64 * 1024**3: raise ValueError('文件大小须在 1 字节至 64 GiB 之间；更大文件请通过路径导入')
-                    uploads = imports.directory / 'uploads';uploads.mkdir(exist_ok=True)
+                    uploads = active_imports.directory / 'uploads';uploads.mkdir(exist_ok=True)
                     target = uploads / (uuid.uuid4().hex + Path(filename).suffix.lower())
                     try:
                         self.connection.settimeout(120)
@@ -191,15 +210,15 @@ def handler(catalog, cache, token, imports=None):
                                 block = self.rfile.read(min(1024 * 1024, remaining))
                                 if not block: raise ValueError('上传中断，请重试')
                                 stream.write(block);remaining -= len(block)
-                        return self.json(imports.create(target, Path(filename).stem), 202)
+                        return self.json(active_imports.create(target, Path(filename).stem), 202)
                     except Exception:
                         target.unlink(missing_ok=True);raise
                 if url.path not in ('/api/datasets', '/api/imports'): return self.json({'error': '接口不存在'}, 404)
                 if not 0 < size <= 8192: raise ValueError('请求大小无效')
                 body = json.loads(self.rfile.read(size))
                 if url.path == '/api/imports':
-                    if not imports: raise ValueError('文件导入未启用')
-                    return self.json(imports.create(body['path']), 202)
+                    if not active_imports: raise ValueError('文件导入未启用')
+                    return self.json(active_imports.create(body['path']), 202)
                 return self.json(catalog.add(body['path']))
             except Exception as exc: self.json({'error': str(exc)}, 400)
 
@@ -209,22 +228,64 @@ def handler(catalog, cache, token, imports=None):
     return Handler
 
 
-def make_server(port, directories, state_dir):
-    state_dir = Path(state_dir).resolve();state_dir.mkdir(parents=True, exist_ok=True)
-    catalog = Catalog()
-    for path in directories: catalog.add(path)
-    runtime = state_dir / 'runtime';runtime.mkdir(exist_ok=True)
-    cache = PreviewCache(state_dir / 'cache')
-    imports = ImportJobs(state_dir / 'imported', catalog)
-    if not catalog.public():
-        from .imports import import_standard
-        demo = state_dir / 'example'
-        if not (demo / 'data' / 'decode_report.json').exists():
-            import_standard(HERE / 'fixtures' / 'tetrahedron.stl', demo, '示例 · 四面体')
-        catalog.add(demo, '内置示例')
-    server = ThreadingHTTPServer(('127.0.0.1', port), handler(catalog, cache, secrets.token_hex(24), imports))
-    server.daemon_threads = True
-    server.import_jobs = imports
-    url = 'http://127.0.0.1:%d/' % server.server_port
-    (runtime / 'server.json').write_text(json.dumps({'url': url, 'pid': os.getpid()}), encoding='utf-8')
-    return server, url
+class Workspace:
+    def __init__(self, settings_file=None, directories=(), message='', on_ready=None):
+        self.catalog = Catalog();self.cache = None;self.imports = None;self.directory = None
+        self.settings_file = settings_file;self.directories = directories;self.message = message
+        self.on_ready = on_ready;self.lock = threading.RLock();self.ready = False;self.server = None
+
+    def public(self):
+        with self.lock:
+            return {'ready': self.ready, 'data_directory': str(self.directory) if self.directory else None,
+                    'message': self.message}
+
+    def activate(self, directory, persist=False):
+        with self.lock:
+            if self.ready: raise ValueError('数据目录已设置。如需更换，请使用 --choose-data-dir 重新启动软件')
+            directory = validate_directory(directory)
+            catalog = Catalog()
+            for path in self.directories: catalog.add(path)
+            cache = PreviewCache(directory / 'cache')
+            imports = ImportJobs(directory / 'imported', catalog)
+            try:
+                if not catalog.public():
+                    from .imports import import_standard
+                    demo = directory / 'example'
+                    if not (demo / 'data' / 'decode_report.json').exists():
+                        import_standard(HERE / 'fixtures' / 'tetrahedron.stl', demo, '示例 · 四面体')
+                    catalog.add(demo, '内置示例')
+                runtime = directory / 'runtime';runtime.mkdir(exist_ok=True)
+                if self.on_ready: self.on_ready(directory)
+                if self.server: self.write_runtime(directory)
+                if persist and self.settings_file: save_directory(self.settings_file, directory)
+                with self.catalog.lock:
+                    self.catalog.datasets = catalog.datasets;self.catalog.objects = catalog.objects
+                self.cache = cache;self.imports = imports;self.directory = directory;self.ready = True;self.message = ''
+            except Exception:
+                imports.close();raise
+
+    def choose(self, directory): self.activate(directory, persist=True)
+
+    def write_runtime(self, directory=None):
+        directory = directory or self.directory
+        if directory is not None and self.server:
+            url = 'http://127.0.0.1:%d/' % self.server.server_port
+            (directory / 'runtime' / 'server.json').write_text(json.dumps({'url': url, 'pid': os.getpid()}), encoding='utf-8')
+
+    def close(self):
+        if self.imports: self.imports.close()
+
+
+def make_server(port, directories, state_dir=None, settings_file=None, setup_message='', on_ready=None, recover_directory=False):
+    workspace = Workspace(settings_file, directories, setup_message, on_ready)
+    if state_dir is not None:
+        try: workspace.activate(validate_directory(state_dir, create=not recover_directory))
+        except (OSError, ValueError):
+            if not recover_directory: raise
+            workspace.message = '已保存的数据目录无法使用，请重新选择。已有文件保持不变。'
+    server = ThreadingHTTPServer(('127.0.0.1', port), handler(workspace.catalog, None, secrets.token_hex(24), workspace=workspace))
+    server.daemon_threads = True;server.workspace = workspace;workspace.server = server
+    try: workspace.write_runtime()
+    except Exception:
+        workspace.close();server.server_close();raise
+    return server, 'http://127.0.0.1:%d/' % server.server_port
