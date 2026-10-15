@@ -163,6 +163,7 @@ export class SceneView {
       if (changed || this.dirty || this.controls.autoRotate) {
         if(this.volume){this.volume.material.uniforms.uOrthographic.value=!!this.camera.isOrthographicCamera;this.camera.getWorldDirection(this.volume.material.uniforms.uCameraDirection.value);}
         this.renderer.render(this.scene, this.camera);this.dirty = false;
+        if(this.sectionRevision!==undefined){this.canvas.dataset.renderedSectionRevision=String(this.sectionRevision);this.canvas.dataset.renderedSectionDistance=String(this.sectionDistance);}
       }
     };animate();
   }
@@ -284,10 +285,18 @@ export class SceneView {
     material.needsUpdate=true;this.dirty=true;
   }
   volumeMode(mode){if(!this.volume)return;this.volume.mode=mode;this.volume.mesh.visible=mode!=='slices';this.volume.planes.forEach(p=>p.visible=mode==='slices');this.volume.material.uniforms.uMode.value=mode==='iso'?1:0;this.dirty=true;}
-  sectionView(normal,point){
+  sectionView(normal,point,reset=false){
+    const up=Math.abs(normal.z)>.98?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1);
+    if(this.camera.isOrthographicCamera&&!reset){
+      const distance=this.camera.position.distanceTo(this.controls.target),changedUp=!this.camera.up.equals(up);
+      this.camera.position.copy(point).addScaledVector(normal,distance);this.camera.up.copy(up);
+      if(changedUp)this.replaceCamera(this.camera,point);
+      else{this.controls.target.copy(point);this.controls.update();this.dirty=true;}
+      return;
+    }
     const aspect=this.camera.aspect, radius=this.bounds.getSize(new THREE.Vector3()).length()*this.group.scale.x/2;
     const half=radius*1.1/Math.min(1,aspect),camera=new THREE.OrthographicCamera(-half*aspect,half*aspect,half,-half,.01,100);
-    camera.aspect=aspect;camera.up.copy(Math.abs(normal.z)>.98?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1));
+    camera.aspect=aspect;camera.up.copy(up);
     camera.position.copy(point).addScaledVector(normal,6);this.replaceCamera(camera,point);
   }
   perspective(){const camera=new THREE.PerspectiveCamera(38,this.camera.aspect,.01,100);camera.up.set(0,0,1);camera.position.copy(this.camera.position);this.replaceCamera(camera,this.controls.target.clone());this.fit(true);}

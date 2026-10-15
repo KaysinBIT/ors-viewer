@@ -12,7 +12,10 @@ function el(tag,text,cls){const node=document.createElement(tag);if(text!=null)n
 function showError(message){$('scene-error').textContent=message;$('scene-error').hidden=false;}
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(state.toastTimer);state.toastTimer=setTimeout(()=>$('toast').hidden=true,4500);}
 let scene,section,rendererError;
-try{scene=new SceneView($('viewport'),showError);section=new SectionController(scene);}catch(error){rendererError='当前浏览器无法启用 WebGL 2 三维显示：'+error.message;showError(rendererError);}
+try{scene=new SceneView($('viewport'),showError);section=new SectionController(scene,(status,count)=>{
+  if(state.object?.kind==='volume')return;
+  $('section-note').textContent=status==='exact'?`精确截线 ${fmt(count)} 段；剖切实时更新，不自动封口。`:status==='live'?'实时剖切与截线显示；后台精确截线暂不可用。':'剖切与截线实时显示；正在后台更新精确截线。';
+});}catch(error){rendererError='当前浏览器无法启用 WebGL 2 三维显示：'+error.message;showError(rendererError);}
 async function api(path,options){const response=await fetch(path,options);if(!response.ok){let value;try{value=await response.json();}catch{}throw new Error(value?.error||`请求失败 (${response.status})`);}return response.json();}
 function objectUrl(action){return `/api/objects/${state.object.id}/${action}`;}
 
@@ -174,14 +177,14 @@ async function showTable(reset=false){
 }
 function openDialog(){$('add-error').hidden=true;$('add-dialog').showModal();$('folder-path').focus();}
 
-function updateSection(distance){
+function updateSection(distance,commitNumber=false){
   if(!section||!state.preview)return;
   const enabled=$('section-enabled').checked,azimuth=Number($('section-azimuth').value),elevation=Number($('section-elevation').value);
   $('section-fields').hidden=!enabled;$('azimuth-value').textContent=azimuth+'°';$('elevation-value').textContent=elevation+'°';
   const {half}=section.limits(azimuth,elevation),d=Math.max(-half,Math.min(half,Number(distance??$('section-distance-number').value)||0));
-  for(const id of ['section-distance','section-distance-number']){const input=$(id);input.min=-half;input.max=half;input.value=d;}
+  for(const id of ['section-distance','section-distance-number']){const input=$(id);input.min=-half;input.max=half;if(id!=='section-distance-number'||commitNumber||document.activeElement!==input)input.value=d;}
   section.update({enabled,azimuth,elevation,distance:d,flip:$('section-flip').checked,only:$('section-mode').value==='only',guide:$('section-guide').checked});
-  $('section-note').textContent=state.object.kind==='volume'?'显示当前采样体数据的任意角度灰度切片；窗口设置同时生效。':`截线来自当前显示的三角面（${fmt(section.segmentCount||0)} 段）；不自动填充或封口。`;
+  if(state.object.kind==='volume')$('section-note').textContent='灰度剖面随角度和距离实时更新；窗口设置同时生效。';
   $('viewport').dataset.section=enabled?'on':'off';$('viewport').dataset.sectionDistance=String(d);
   if(state.faceSection&&enabled)section.face();
 }
@@ -222,17 +225,17 @@ $('quality').onchange=loadPreview;$('time-step').onchange=loadPreview;
 $('retention').oninput=()=>{$('retention-value').textContent=$('retention').value+'%';};$('retention').onchange=loadPreview;
 $('download-preview').onclick=exportPreview;
 $('section-enabled').onchange=()=>{state.faceSection=false;updateSection();};
-for(const id of ['section-azimuth','section-elevation'])$(id).oninput=()=>{clearTimeout(state.sectionTimer);state.sectionTimer=setTimeout(()=>updateSection(),100);};
+for(const id of ['section-azimuth','section-elevation'])$(id).oninput=()=>updateSection();
 for(const id of ['section-flip','section-guide','section-mode'])$(id).onchange=()=>updateSection();
-$('section-distance').oninput=()=>{clearTimeout(state.sectionTimer);const value=$('section-distance').value;state.sectionTimer=setTimeout(()=>updateSection(value),100);};
-$('section-distance-number').onchange=()=>updateSection($('section-distance-number').value);
-$('section-distance-number').oninput=()=>{const value=$('section-distance-number').value;if(value==='')return;clearTimeout(state.sectionTimer);state.sectionTimer=setTimeout(()=>updateSection(value),250);};
+$('section-distance').oninput=()=>updateSection($('section-distance').value,true);
+$('section-distance-number').onchange=()=>updateSection($('section-distance-number').value,true);
+$('section-distance-number').oninput=()=>{const value=$('section-distance-number').value;if(value!==''&&Number.isFinite(Number(value)))updateSection(value);};
 $('section-center').onclick=()=>updateSection(0);
-$('section-face').onclick=()=>{state.faceSection=true;updateSection($('section-distance-number').value);section?.face();$('auto-rotate').setAttribute('aria-pressed','false');toast('已正对剖面 · 正交投影');};
+$('section-face').onclick=()=>{state.faceSection=true;updateSection($('section-distance-number').value,true);section?.face(true);$('auto-rotate').setAttribute('aria-pressed','false');toast('已正对剖面 · 正交投影');};
 $('perspective-view').onclick=()=>{state.faceSection=false;scene?.perspective();$('auto-rotate').setAttribute('aria-pressed','false');};
 $('viewport').addEventListener('pointerdown',()=>state.faceSection=false);
-$('fit-view').onclick=()=>scene?.fit();document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>scene?.view(b.dataset.view));
-$('auto-rotate').onclick=()=>{const value=$('auto-rotate').getAttribute('aria-pressed')!=='true';$('auto-rotate').setAttribute('aria-pressed',value);scene?.rotate(value);};
+$('fit-view').onclick=()=>{state.faceSection=false;scene?.fit();};document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{state.faceSection=false;scene?.view(b.dataset.view);});
+$('auto-rotate').onclick=()=>{state.faceSection=false;const value=$('auto-rotate').getAttribute('aria-pressed')!=='true';$('auto-rotate').setAttribute('aria-pressed',value);scene?.rotate(value);};
 $('screenshot').onclick=()=>{if(!scene)return;const a=document.createElement('a');a.href=scene.screenshot();a.download='ORS_3D_'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';a.click();toast('已生成当前视图截图');};
 $('opacity').oninput=()=>{$('opacity-value').textContent=$('opacity').value+'%';scene?.opacity(Number($('opacity').value)/100);};
 $('wireframe').onchange=()=>scene?.wireframe($('wireframe').checked);$('show-grid').onchange=()=>scene?.showGrid($('show-grid').checked);$('show-box').onchange=()=>scene?.showBox($('show-box').checked);
@@ -256,6 +259,6 @@ $('add-form').onsubmit=async event=>{
   }catch(error){$('add-error').textContent=error.message;$('add-error').hidden=false;$('import-progress').hidden=true;}
   finally{$('confirm-add').disabled=false;}
 };
-window.addEventListener('keydown',event=>{if(event.key==='Escape')document.body.classList.remove('inspector-open');if(event.key.toLowerCase()==='f'&&!['INPUT','SELECT','TEXTAREA'].includes(event.target.tagName))scene?.fit();});
+window.addEventListener('keydown',event=>{if(event.key==='Escape')document.body.classList.remove('inspector-open');if(event.key.toLowerCase()==='f'&&!['INPUT','SELECT','TEXTAREA'].includes(event.target.tagName)){state.faceSection=false;scene?.fit();}});
 loadCatalog().catch(error=>{showError(error.message);$('app-status').textContent='无法连接本地数据服务';});
 const pendingJob=localStorage.getItem('ors-import-job');if(pendingJob){$('confirm-add').disabled=true;api('/api/imports/'+pendingJob).then(watchImport).catch(error=>{localStorage.removeItem('ors-import-job');toast(error.message);}).finally(()=>$('confirm-add').disabled=false);}

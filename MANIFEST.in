@@ -1,6 +1,7 @@
-include LICENSE README.md CHANGELOG.md THIRD_PARTY_NOTICES.md requirements-build.txt ORSViewer.spec .gitattributes .gitignore
+include LICENSE README.md CHANGELOG.md THIRD_PARTY_NOTICES.md requirements-build.txt ORSViewer.spec .gitattributes .gitignore package.json
 recursive-include viewer/web *
 recursive-include viewer/fixtures *
 recursive-include scripts *.py
-recursive-include tests *.py
+recursive-include tests *.py *.mjs
+recursive-include docs *.json
 recursive-include .github *.yml

@@ -2,5 +2,5 @@
 
 @media(max-width:1000px){.viewport-header .icon-btn{font-size:11px;background:#172a38bd;border:1px solid #36505f;padding:6px 9px}.viewport-header>div{max-width:calc(100% - 76px)}}
 
-.inspector-close{display:none}@media(max-width:1000px){.inspector-close{display:block;margin-left:7px;padding:0 4px}.inspector-heading .state-pill{margin-left:auto}}
+.inspector-close{display:none}@media(max-width:1000px){.inspector-close{display:block;margin-left:7px;padding:0 4px}.inspector-heading .state-pill{margin-left:auto}}.manual-link{font-size:12px;color:#98bdb3;white-space:nowrap}
 .import-progress{background:#153b32;border:1px solid #326b57;padding:12px;border-radius:6px;color:#abe5ce;line-height:1.8;font-size:12px;overflow-wrap:anywhere}.import-hint{font-size:11px!important;color:#748d9f!important;margin:12px 0!important}#retention-info{line-height:1.8;margin-top:-7px}#section-fields .range-field{margin-top:16px}#section-distance-number{font-variant-numeric:tabular-nums}#retention-field{border-bottom:1px solid #253140;padding-bottom:6px}.section-face-active{color:#78ffe0}dialog .field input[type=file]{padding:14px 8px}

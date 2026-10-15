@@ -9,7 +9,7 @@
 <body>
   <header class="app-header">
     <div class="brand"><img src="icon.svg" alt=""><span>ORS <b>Viewer</b></span><i></i><small>三维数据工作台</small></div>
-    <div class="header-actions"><span class="local-badge"><i></i> 本地运行</span><button id="add-dataset" class="primary"><span>＋</span> 导入文件</button></div>
+    <div class="header-actions"><a href="manual.html" target="_blank" rel="noopener" class="manual-link">使用说明</a><span class="local-badge"><i></i> 本地运行</span><button id="add-dataset" class="primary"><span>＋</span> 导入文件</button></div>
   </header>
   <div class="workspace">
     <aside class="sidebar">
@@ -81,7 +81,7 @@
       <div class="preview-note"><span>ⓘ</span><p id="preview-note">显示采用交互式预览，完整数据保留在解析目录中。</p></div>
     </aside>
   </div>
-  <footer class="app-footer"><span><i></i> <span id="app-status">正在连接本地数据服务</span></span><span>独立解析 · 本地查看 <b>v0.6</b></span></footer>
+  <footer class="app-footer"><span><i></i> <span id="app-status">正在连接本地数据服务</span></span><span>独立解析 · 本地查看 <b>v0.6.1</b></span></footer>
   <dialog id="add-dialog"><form id="add-form"><div class="dialog-heading"><h2>导入三维数据</h2><button type="button" id="close-dialog" class="icon-btn" aria-label="关闭">×</button></div><p>原始文件由 Python 独立解析，完成后自动显示模型。支持 <b>.ORSSession / .ORSObject / .STL / .NPY</b>。</p><label class="field"><span>导入方式</span><select id="import-mode"><option value="path">本地文件路径（适合大文件）</option><option value="file">选择文件</option><option value="directory">已有解析目录</option></select></label><label class="field" id="path-field"><span id="path-label">本地文件路径</span><input id="folder-path" placeholder="D:\数据\sample.ORSSession" required autocomplete="off"></label><label class="field" id="file-field" hidden><span>选择要解析的文件</span><input id="import-file" type="file" accept=".ORSSession,.ORSObject,.orssession,.orsobject,.stl,.STL,.npy"></label><p class="import-hint">ORS 支持体数据、分割、网格与测量表。NPY 轴顺序为 ZYX / TZYX，默认体素间距为 1。输出保存在 imported 目录，原始文件保持不变。</p><div id="import-progress" class="import-progress" role="status" hidden></div><div id="add-error" class="form-error" hidden></div><div class="dialog-footer"><small>仅在本机处理，无需 Dragonfly</small><button id="confirm-add" class="primary" type="submit">解析并显示</button></div></form></dialog>
   <div id="toast" class="toast" role="status" hidden></div>
   <script type="module" src="app.js"></script>

@@ -7,7 +7,7 @@ import sys
 import threading
 import webbrowser
 
-VERSION = '0.6.0'
+VERSION = '0.6.1'
 
 
 def default_data_dir():

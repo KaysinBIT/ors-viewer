@@ -139,7 +139,7 @@ def handler(catalog, cache, token, imports=None):
             try:
                 url = urlsplit(self.path);route = unquote(url.path);q = parse_qs(url.query)
                 if route == '/api/catalog': return self.json({'datasets': catalog.public()})
-                if route == '/api/health': return self.json({'ok': True, 'version': '0.6.0'})
+                if route == '/api/health': return self.json({'ok': True, 'version': '0.6.1'})
                 parts = route.strip('/').split('/')
                 if len(parts) == 3 and parts[:2] == ['api', 'imports'] and imports:
                     return self.json(imports.get(parts[2]))

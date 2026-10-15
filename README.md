@@ -2,6 +2,8 @@
 
 独立的 ORSSession 解析与三维查看软件。支持体数据、分割标签、三角网格和测量表，全程在本机运行，无需安装 Dragonfly。
 
+使用说明：[PDF 说明书](viewer/web/manual.pdf) · [网页版说明书源文件](viewer/web/manual.html)。运行软件后也可点击右上角“使用说明”，离线阅读全部操作步骤。
+
 ## 功能
 
 - 导入 `.ORSSession`、`.ORSObject`、二进制/ASCII `.STL` 和三维/四维数值 `.NPY`。
@@ -10,13 +12,14 @@
 - 体数据显示最大强度投影、等值面、三向切片和任意角度灰度切片，支持窗口与时间步调节。
 - 分割标签着色、单标签局部显示、完整体素统计。
 - 可调剖面方位角、仰角和距离，支持反向剖切、仅显示截面及沿法线的正交正视。
+- 拖动剖面时同步更新三维画面，后台计算精确截线；正视模式移动剖面时保持缩放。
 - 测量表分页、单位与缩放、CSV 下载、逐顶点标量着色。
 - 三维旋转、平移、缩放、居中、线框、包围盒、截图及显示网格 PLY 导出。
 - 后台导入任务、结果持久化、桌面启动窗口、命令行提取。
 
 ## Windows 免安装版
 
-1. 从 Releases 下载 `ORSViewer-0.6.0-Windows-x64.zip`。
+1. 从 Releases 下载 `ORSViewer-0.6.1-Windows-x64.zip`。
 2. 完整解压，保持 `ORSViewer.exe` 与 `_internal` 目录在一起。
 3. 双击 `ORSViewer.exe`，在打开的界面中点击“导入文件”。
 
@@ -80,11 +83,14 @@ ors-extract sample.ORSObject --output extracted --dense-labels
 
 ```sh
 python -m unittest discover -s tests -v
+node --test tests/test_section.mjs
 python -m pip install -r requirements-build.txt
 python scripts/build_windows.py
 ```
 
 Windows 构建产生独立程序目录、ZIP 和 SHA-256 校验文件。源码安装可用于支持 Python 3.14 与 WebGL 2 的系统；随附的独立程序面向 Windows x64。
+
+说明书内容位于 `docs/manual_content.json`。如需重新生成 HTML/PDF，安装 ReportLab 后运行 `python scripts/build_manual.py`；非 Windows 环境可通过 `--font` 和 `--font-bold` 指定支持中文的 TrueType 字体。
 
 ## 许可证
 
