@@ -102,6 +102,9 @@ void main() {
 const sliceFragment = `
 precision highp sampler3D;
 uniform sampler3D uData;
+uniform sampler2D uSliceData;
+uniform bool uExactSlice;
+uniform int uAxis;
 uniform vec2 uWindow;
 uniform float uOpacity;
 uniform bool uClipEnabled;
@@ -111,6 +114,7 @@ out vec4 fragColor;
 void main() {
   if(uClipEnabled && dot(uClipPlane.xyz,vTex-.5)+uClipPlane.w < 0.0) discard;
   float v=clamp((texture(uData,vTex).r-uWindow.x)/max(uWindow.y-uWindow.x,.00001),0.0,1.0);
+  if(uExactSlice){vec2 uv=uAxis==0?vTex.yz:(uAxis==1?vTex.xz:vTex.xy);v=texture(uSliceData,uv).r;}
   fragColor=vec4(vec3(v),uOpacity);
 }`;
 
@@ -148,7 +152,7 @@ export class SceneView {
       onError('三维着色器无法在当前浏览器运行，请尝试更新浏览器或使用其他显示方式。');
     };
     const resize = () => {
-      const rect = canvas.parentElement.getBoundingClientRect();
+      const rect = canvas.getBoundingClientRect();
       if (!rect.width || !rect.height) return;
       this.renderer.setSize(rect.width, rect.height, false);
       this.camera.aspect = rect.width / rect.height;
@@ -163,6 +167,7 @@ export class SceneView {
       if (changed || this.dirty || this.controls.autoRotate) {
         if(this.volume){this.volume.material.uniforms.uOrthographic.value=!!this.camera.isOrthographicCamera;this.camera.getWorldDirection(this.volume.material.uniforms.uCameraDirection.value);}
         this.renderer.render(this.scene, this.camera);this.dirty = false;
+        if(this.volume)this.canvas.dataset.renderedSlices=this.volume.indices.join(',');
         if(this.sectionRevision!==undefined){this.canvas.dataset.renderedSectionRevision=String(this.sectionRevision);this.canvas.dataset.renderedSectionDistance=String(this.sectionDistance);}
       }
     };animate();
@@ -173,7 +178,7 @@ export class SceneView {
     this.group.traverse(o => {
       if (o.geometry) geometry.add(o.geometry);
       const ms = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
-      ms.forEach(m => {materials.add(m);if(m.uniforms?.uData) textures.add(m.uniforms.uData.value);});
+      ms.forEach(m => {materials.add(m);if(m.uniforms?.uData) textures.add(m.uniforms.uData.value);if(m.uniforms?.uSliceData)textures.add(m.uniforms.uSliceData.value);});
     });
     geometry.forEach(g => g.dispose());materials.forEach(m => m.dispose());textures.forEach(t => t.dispose());
     this.group.clear();this.group.position.set(0, 0, 0);this.group.scale.setScalar(1);
@@ -233,14 +238,18 @@ export class SceneView {
     const matrix=new THREE.Matrix4().set(...meta.matrix.flat());
     const volume=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),material);
     volume.matrixAutoUpdate=false;volume.matrix.copy(matrix);this.group.add(volume);
-    const planes = [];
+    const planes = [], outlines=[];
     for(let axis=0;axis<3;axis++) {
+      const blank=new THREE.DataTexture(new Uint8Array([0,0,0,255]),1,1);blank.needsUpdate=true;
       const mat=new THREE.ShaderMaterial({glslVersion:THREE.GLSL3,side:THREE.DoubleSide,transparent:true,
-        uniforms:{...common,uAxis:{value:axis},uSlice:{value:.5}},vertexShader:sliceVertex,fragmentShader:sliceFragment});
+        uniforms:{...common,uAxis:{value:axis},uSlice:{value:.5},uSliceData:{value:blank},uExactSlice:{value:false}},vertexShader:sliceVertex,fragmentShader:sliceFragment});
       const plane=new THREE.Mesh(new THREE.PlaneGeometry(1,1),mat);plane.matrixAutoUpdate=false;
       plane.matrix.copy(matrix);plane.frustumCulled=false;plane.visible=false;this.group.add(plane);planes.push(plane);
+      const geometry=new THREE.BufferGeometry();geometry.setAttribute('position',new THREE.BufferAttribute(new Float32Array(12),3));
+      const line=new THREE.LineLoop(geometry,new THREE.LineBasicMaterial({color:[0xff4545,0x31e65f,0x4585ff][axis],depthTest:false}));
+      line.matrixAutoUpdate=false;line.matrix.copy(matrix);line.frustumCulled=false;line.visible=false;line.renderOrder=3;this.group.add(line);outlines.push(line);
     }
-    this.volume={mesh:volume,planes,material,common,meta};
+    this.volume={mesh:volume,planes,outlines,material,common,meta,indices:[-1,-1,-1]};
     this.setWindow(...meta.window);
     return new THREE.Box3(new THREE.Vector3(-.5,-.5,-.5),new THREE.Vector3(.5,.5,.5)).applyMatrix4(matrix);
   }
@@ -284,7 +293,7 @@ export class SceneView {
     }
     material.needsUpdate=true;this.dirty=true;
   }
-  volumeMode(mode){if(!this.volume)return;this.volume.mode=mode;this.volume.mesh.visible=mode!=='slices';this.volume.planes.forEach(p=>p.visible=mode==='slices');this.volume.material.uniforms.uMode.value=mode==='iso'?1:0;this.dirty=true;}
+  volumeMode(mode){if(!this.volume)return;this.volume.mode=mode;this.volume.mesh.visible=mode!=='slices';this.volume.planes.forEach(p=>p.visible=mode==='slices');this.volume.outlines.forEach(p=>p.visible=mode==='slices');this.volume.material.uniforms.uMode.value=mode==='iso'?1:0;this.dirty=true;}
   sectionView(normal,point,reset=false){
     const up=Math.abs(normal.z)>.98?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1);
     if(this.camera.isOrthographicCamera&&!reset){
@@ -307,6 +316,19 @@ export class SceneView {
   }
   setWindow(low,high){if(!this.volume)return;const [min,max]=this.volume.meta.range;this.volume.common.uWindow.value.set((low-min)/Math.max(max-min,1e-20),(high-min)/Math.max(max-min,1e-20));this.dirty=true;}
   iso(value){if(this.volume)this.volume.material.uniforms.uIso.value=value;this.dirty=true;}
-  slice(axis,index){if(!this.volume)return;const shape=this.volume.meta.original_shape_tzyx;const n=shape[3-axis];this.volume.planes[axis].material.uniforms.uSlice.value=(index+.5)/n;this.dirty=true;}
+  slice(axis,index){
+    if(!this.volume)return;const v=this.volume,n=v.meta.original_shape_tzyx[3-axis],fraction=(index+.5)/n;
+    if(v.indices[axis]!==index)v.planes[axis].material.uniforms.uExactSlice.value=false;
+    v.indices[axis]=index;v.planes[axis].material.uniforms.uSlice.value=fraction;
+    const [u,w]=[[1,2],[0,2],[0,1]][axis],positions=v.outlines[axis].geometry.attributes.position;
+    [[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]].forEach((corner,i)=>{const point=[0,0,0];point[axis]=fraction-.5;point[u]=corner[0];point[w]=corner[1];positions.setXYZ(i,...point);});
+    positions.needsUpdate=true;this.dirty=true;
+  }
+  exactSlice(axis,canvas){
+    if(!this.volume||Math.max(canvas.width,canvas.height)>this.renderer.capabilities.maxTextureSize)return;
+    const uniforms=this.volume.planes[axis].material.uniforms;let texture=uniforms.uSliceData.value;
+    if(!texture.isCanvasTexture){texture.dispose();texture=new THREE.CanvasTexture(canvas);texture.minFilter=texture.magFilter=THREE.NearestFilter;texture.generateMipmaps=false;uniforms.uSliceData.value=texture;}
+    texture.image=canvas;texture.needsUpdate=true;uniforms.uExactSlice.value=true;this.dirty=true;
+  }
   screenshot(){this.renderer.render(this.scene,this.camera);return this.canvas.toDataURL('image/png');}
 }

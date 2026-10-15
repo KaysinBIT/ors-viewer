@@ -70,7 +70,7 @@ export class SectionController {
       v.volume.common.uClipEnabled.value=o.enabled;
       v.volume.common.uClipPlane.value.set(local.normal.x,local.normal.y,local.normal.z,local.constant);
       v.volumeMode(v.volume.mode||'mip');
-      if(o.enabled&&o.only){v.volume.mesh.visible=false;v.volume.planes.forEach(p=>p.visible=false);}
+      if(o.enabled&&o.only){v.volume.mesh.visible=false;v.volume.planes.forEach(p=>p.visible=false);v.volume.outlines.forEach(p=>p.visible=false);}
       this.slice.visible=o.enabled;this.slice.material.uniforms.uWorldToVolume.value.copy(inverse);this.place(this.slice,point,normal);
     }
     if(this.live){

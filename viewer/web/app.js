@@ -1,6 +1,7 @@
 import { SceneView, parsePacket, labelColor } from './scene.js';
 import { SectionController } from './section.js';
 import { LocalFilePicker } from './file-picker.js';
+import { MPRView } from './mpr.js';
 
 const $=id=>document.getElementById(id);
 const state={datasets:[],dataset:null,object:null,meta:null,preview:null,filter:'all',request:0,tableStart:0,selectedLabel:0};
@@ -17,6 +18,7 @@ try{scene=new SceneView($('viewport'),showError);section=new SectionController(s
   if(state.object?.kind==='volume')return;
   $('section-note').textContent=status==='exact'?`精确截线 ${fmt(count)} 段；剖切实时更新，不自动封口。`:status==='live'?'实时剖切与截线显示；后台精确截线暂不可用。':'剖切与截线实时显示；正在后台更新精确截线。';
 });}catch(error){rendererError='当前浏览器无法启用 WebGL 2 三维显示：'+error.message;showError(rendererError);}
+const mpr=new MPRView($('view-layout'),scene,setSlicePosition,extendWindowRange);
 async function api(path,options){const response=await fetch(path,options);if(!response.ok){let value;try{value=await response.json();}catch{}throw new Error(value?.error||`请求失败 (${response.status})`);}return response.json();}
 function objectUrl(action){return `/api/objects/${state.object.id}/${action}`;}
 
@@ -55,6 +57,7 @@ function renderList(){
 async function selectObject(id){
   const object=state.dataset.objects.find(o=>o.id===id);if(!object)return;
   ++state.request;state.abort?.abort();
+  mpr.clear();$('section-controls').hidden=false;$('mpr-toggle').hidden=object.kind!=='volume';$('volume-mode').value='mpr';
   state.object=object;state.selectedLabel=0;state.tableStart=0;state.meta=null;state.preview=null;
   if(scene?.camera.isOrthographicCamera)scene.perspective();
   $('retention').value=100;$('retention-value').textContent='100%';$('section-enabled').checked=false;$('section-distance').value=0;$('section-distance-number').value=0;$('section-fields').hidden=true;
@@ -109,7 +112,8 @@ async function loadPreview(){
     state.preview=packet;scene.load(packet);scene.opacity(Number($('opacity').value)/100);scene.wireframe($('wireframe').checked);scene.showGrid($('show-grid').checked);scene.showBox($('show-box').checked);
     const m=packet.meta;$('preview-note').textContent=m.approximation;
     if(m.kind==='volume'){
-      setupVolume(m);$('render-status').textContent=`显示体素 ${m.sample_shape_zyx.slice().reverse().join(' × ')}`;
+      setupVolume(m);$('render-status').textContent=`3D 预览 ${m.sample_shape_zyx.slice().reverse().join(' × ')} · 二维切片为原始分辨率`;
+      $('preview-note').textContent='CT 二维切片读取原始分辨率，按实际体素间距显示；窗口映射使用 float32，定位读数来自原始数值。三维快速纹理为采样预览，原始切片到达后同步替换定位平面。';
     }else{$('render-status').textContent=`${m.focus_label?'标签 '+m.focus_label+' · ':''}${m.simplified===false?'原始网格':'当前显示'} ${fmt(m.preview_triangles||0)} 三角形`;}
     const base=m.base_triangles||m.preview_triangles||0,ratio=m.actual_retention??100;
     $('retention-info').textContent=`${m.kind==='mesh'?'原始网格':'当前采样表面'} ${fmt(base)} → ${fmt(m.preview_triangles||0)} 面 · 实际保留 ${ratio.toFixed(2)}%`;
@@ -134,14 +138,35 @@ async function loadPreview(){
   finally{if(request===state.request)$('loading').hidden=true;}
 }
 function setupVolume(meta){
-  const [min,max]=meta.range,step=Math.max((max-min)/1000,.0001);
-  ['window-low','window-high'].forEach((key,i)=>{const input=$(key);input.min=min;input.max=max>min?max:min+1;input.step=step;input.value=meta.window[i];});
-  ['x','y','z'].forEach((axis,i)=>{const n=meta.original_shape_tzyx[3-i],input=$('slice-'+axis);input.min=0;input.max=n-1;input.step=1;input.value=Math.floor((n-1)/2);updateSlice(axis,i);});
+  const previous=mpr.id===state.object.id?mpr.indices:null;
+  const [min,max]=meta.range;
+  ['window-low','window-high'].forEach((key,i)=>{const input=$(key);input.min=min;input.max=max>min?max:min+1;input.step='any';input.value=meta.window[i];});
+  const indices=[];
+  ['x','y','z'].forEach((axis,i)=>{const n=meta.original_shape_tzyx[3-i],input=$('slice-'+axis);input.min=0;input.max=n-1;input.step=1;input.value=previous?.[i]??Math.floor((n-1)/2);indices.push(Number(input.value));});
+  mpr.source(state.object.id,state.meta,meta.time_step,indices);setSlicePosition(indices);
   updateWindow();updateVolumeMode();scene.iso(Number($('iso').value)/100);
 }
-function updateWindow(){const low=Number($('window-low').value),high=Number($('window-high').value);$('window-low-value').textContent=number(low);$('window-high-value').textContent=number(high);scene?.setWindow(low,Math.max(high,low+.0001));}
-function updateVolumeMode(){const mode=$('volume-mode').value;$('slice-fields').hidden=mode!=='slices';$('iso-field').hidden=mode!=='iso';scene?.volumeMode(mode);if(state.preview?.meta.kind==='volume')updateSection();}
-function updateSlice(axis,index){const value=Number($('slice-'+axis).value);$('slice-'+axis+'-value').textContent=value;scene?.slice(index,value);}
+function extendWindowRange(range){for(const key of ['window-low','window-high']){const input=$(key);input.min=Math.min(Number(input.min),range[0]);input.max=Math.max(Number(input.max),range[1]);}}
+function updateWindow(event){
+  let low=Number($('window-low').value),high=Number($('window-high').value);
+  const gap=Math.max((Number($('window-high').max)-Number($('window-low').min))*1e-6,1e-10);
+  if(low>=high){if(event?.target?.id==='window-low')low=high-gap;else high=low+gap;}
+  $('window-low').value=low;$('window-high').value=high;
+  $('window-low-value').textContent=number(low);$('window-high-value').textContent=number(high);scene?.setWindow(low,high);mpr.window(low,high);
+}
+function updateVolumeMode(){
+  const mode=$('volume-mode').value,isMPR=mode==='mpr'&&state.object?.kind==='volume';
+  $('slice-fields').hidden=!isMPR&&mode!=='slices';$('iso-field').hidden=mode!=='iso';$('mpr-help').hidden=!isMPR;
+  $('section-controls').hidden=isMPR;$('mpr-toggle').setAttribute('aria-pressed',String(isMPR));
+  if(isMPR){$('section-enabled').checked=false;state.faceSection=false;if(scene?.camera.isOrthographicCamera)scene.perspective();}
+  mpr.setActive(isMPR);scene?.volumeMode(isMPR?'slices':mode);scene?.showGrid(!isMPR&&$('show-grid').checked);
+  if(state.preview?.meta.kind==='volume')updateSection();
+}
+function setSlicePosition(indices){
+  ['x','y','z'].forEach((axis,i)=>{const input=$('slice-'+axis);input.value=indices[i];const value=Number(input.value);$('slice-'+axis+'-value').textContent=value;scene?.slice(i,value);});
+  mpr.position(['x','y','z'].map(axis=>Number($('slice-'+axis).value)));
+}
+function updateSlice(){setSlicePosition(['x','y','z'].map(axis=>Number($('slice-'+axis).value)));}
 function renderLabels(){
   const counts=state.meta.label_voxel_counts||{};$('label-list').replaceChildren();
   for(const [id,count] of Object.entries(counts).sort((a,b)=>Number(a[0])-Number(b[0]))){
@@ -257,7 +282,9 @@ $('perspective-view').onclick=()=>{state.faceSection=false;scene?.perspective();
 $('viewport').addEventListener('pointerdown',()=>state.faceSection=false);
 $('fit-view').onclick=()=>{state.faceSection=false;scene?.fit();};document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{state.faceSection=false;scene?.view(b.dataset.view);});
 $('auto-rotate').onclick=()=>{state.faceSection=false;const value=$('auto-rotate').getAttribute('aria-pressed')!=='true';$('auto-rotate').setAttribute('aria-pressed',value);scene?.rotate(value);};
-$('screenshot').onclick=()=>{if(!scene)return;const a=document.createElement('a');a.href=scene.screenshot();a.download='ORS_3D_'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';a.click();toast('已生成当前视图截图');};
+$('screenshot').onclick=()=>{if(!scene)return;if(mpr.active&&!mpr.ready())return toast('当前切片正在读取，请稍后截图');const a=$('save-screenshot');a.href=mpr.screenshot();a.download='ORS_'+(mpr.active?'CT':'3D')+'_'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';$('screenshot-image').src=a.href;$('screenshot-dialog').showModal();};
+$('close-screenshot').onclick=()=>{$('screenshot-dialog').close();$('screenshot-image').removeAttribute('src');$('save-screenshot').removeAttribute('href');};
+$('mpr-toggle').onclick=()=>{$('volume-mode').value=mpr.active?'mip':'mpr';updateVolumeMode();};
 $('opacity').oninput=()=>{$('opacity-value').textContent=$('opacity').value+'%';scene?.opacity(Number($('opacity').value)/100);};
 $('wireframe').onchange=()=>scene?.wireframe($('wireframe').checked);$('show-grid').onchange=()=>scene?.showGrid($('show-grid').checked);$('show-box').onchange=()=>scene?.showBox($('show-box').checked);
 $('scalar-select').onchange=selectScalar;$('volume-mode').onchange=updateVolumeMode;

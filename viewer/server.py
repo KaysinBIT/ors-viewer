@@ -17,6 +17,7 @@ import webbrowser
 
 import numpy as np
 from .preview import PreviewCache, safe_file, unit_of
+from .slices import slice_packet, voxel_value
 from .imports import ImportJobs, EXTENSIONS
 from .file_browser import list_directory, create_directory
 from .settings import validate_directory, save_directory
@@ -141,7 +142,7 @@ def handler(catalog, cache, token, imports=None, workspace=None):
             try:
                 url = urlsplit(self.path);route = unquote(url.path);q = parse_qs(url.query)
                 if route == '/api/catalog': return self.json({'datasets': catalog.public()})
-                if route == '/api/health': return self.json({'ok': True, 'version': '0.6.2'})
+                if route == '/api/health': return self.json({'ok': True, 'version': '0.7.0'})
                 if route == '/api/settings':
                     return self.json(workspace.public() if workspace else {'ready': True, 'data_directory': None, 'message': ''})
                 parts = route.strip('/').split('/')
@@ -153,6 +154,15 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                     folder, meta = catalog.get(parts[2])
                     action = parts[3] if len(parts) == 4 else 'metadata'
                     if action == 'metadata': return self.json(meta)
+                    if action == 'slice':
+                        payload = slice_packet(folder, meta, int(q.get('axis', ['2'])[0]),
+                                               int(q.get('index', ['0'])[0]), int(q.get('time', ['0'])[0]))
+                        self.send_headers(mime='application/octet-stream', length=len(payload))
+                        self.end_headers();self.wfile.write(payload)
+                        return
+                    if action == 'voxel':
+                        return self.json(voxel_value(folder, meta, [int(q.get(k, ['0'])[0]) for k in ('x', 'y', 'z')],
+                                                     int(q.get('time', ['0'])[0])))
                     if action == 'preview':
                         if active_cache is None: raise ValueError('请先设置数据目录')
                         path = active_cache.get(folder, meta, q.get('quality', ['balanced'])[0],

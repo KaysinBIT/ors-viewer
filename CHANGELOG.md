@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+- Linked CT views: three original-resolution 2D planes and a synchronized 3D locator.
+- Drag crosshairs, scroll slices, navigate with keyboard or X/Y/Z sliders, and inspect original voxel values.
+- Shared grayscale window, time-step navigation, affine-aware aspect ratio, and four-view PNG export.
+- Light gray controls, black grayscale images, red/green/blue axes, and a blue 3D background.
+- Bounded slice requests reject stale results during rapid movement. Original arrays and full mesh defaults remain unchanged.
+- Updated offline HTML and PDF manuals with CT navigation instructions.
+
 ## 0.6.2
 
 - Add local file and directory selection buttons with a browsable filesystem picker.

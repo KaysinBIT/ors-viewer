@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ors-viewer"
-version = "0.6.2"
+version = "0.7.0"
 description = "Independent ORSSession extraction and local 3D visualization with controllable mesh simplification and oblique sections."
 readme = "README.md"
 requires-python = ">=3.14"
