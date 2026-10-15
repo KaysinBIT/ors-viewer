@@ -1,0 +1,6 @@
+include LICENSE README.md CHANGELOG.md THIRD_PARTY_NOTICES.md requirements-build.txt ORSViewer.spec .gitattributes .gitignore
+recursive-include viewer/web *
+recursive-include viewer/fixtures *
+recursive-include scripts *.py
+recursive-include tests *.py
+recursive-include .github *.yml

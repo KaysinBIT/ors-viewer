@@ -1,0 +1,2 @@
+* text=auto eol=lf
+viewer/web/vendor/* -text -whitespace

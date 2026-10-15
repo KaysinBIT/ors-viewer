@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="viewer-token" content="__VIEWER_TOKEN__">
+  <title>ORS Viewer · 三维解析结果</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="brand"><img src="icon.svg" alt=""><span>ORS <b>Viewer</b></span><i></i><small>三维数据工作台</small></div>
+    <div class="header-actions"><span class="local-badge"><i></i> 本地运行</span><button id="add-dataset" class="primary"><span>＋</span> 导入文件</button></div>
+  </header>
+  <div class="workspace">
+    <aside class="sidebar">
+      <div class="section-kicker">数据集 <span id="dataset-count">0</span></div>
+      <select id="dataset-select" aria-label="选择数据集"></select>
+      <div class="dataset-caption" id="dataset-caption">等待载入解析结果</div>
+      <div class="search-wrap"><span>⌕</span><input id="search" placeholder="搜索对象名称…" aria-label="搜索对象"></div>
+      <div class="filters" id="type-filters"><button class="active" data-kind="all">全部</button><button data-kind="mesh">网格</button><button data-kind="volume">体数据</button><button data-kind="labels">分割</button></div>
+      <label class="check small hidden-check"><input id="show-hidden" type="checkbox"> 显示撤销快照</label>
+      <div id="object-list" class="object-list" aria-label="数据对象列表"></div>
+      <div class="sidebar-footer"><span class="shield">◇</span><div>数据始终保存在本机<small>离线显示 · 无需 Dragonfly</small></div></div>
+    </aside>
+    <main id="stage" class="stage">
+      <div class="viewport-header"><div><span class="eyebrow" id="object-kind">3D VIEWPORT</span><h1 id="object-title">准备查看三维数据</h1></div><button id="toggle-inspector" class="icon-btn" aria-label="显示参数面板" title="显示参数面板">参数 ☷</button></div>
+      <div class="view-toolbar" aria-label="视角工具">
+        <button id="fit-view" title="模型居中 (F)">⌖ <span>居中</span></button><i></i>
+        <button data-view="front">前视</button><button data-view="top">俯视</button><button data-view="side">侧视</button><i></i>
+        <button id="auto-rotate" aria-pressed="false">↻ <span>旋转</span></button>
+        <button id="screenshot">▧ <span>截图</span></button>
+        <button id="perspective-view" title="恢复透视三维视角">3D</button>
+      </div>
+      <div id="canvas-wrap"><canvas id="viewport" aria-label="交互式三维视图"></canvas></div>
+      <div id="empty-state" class="empty-state" hidden><div class="empty-cube">◇</div><h2>导入文件，查看三维结果</h2><p>支持 ORSSession、ORSObject、STL、NPY，<br>也可打开已有的解析目录。</p><button id="empty-add" class="primary">导入文件</button></div>
+      <div id="loading" class="loading" hidden><div class="spinner"></div><strong>正在准备三维预览</strong><span id="loading-description">首次载入大模型需要一些时间</span></div>
+      <div id="scene-error" class="scene-error" hidden></div>
+      <div class="canvas-footer"><span>左键旋转 · 右键平移 · 滚轮缩放</span><span id="render-status">等待数据</span></div>
+      <div id="scalar-legend" class="scalar-legend" hidden><span id="legend-title"></span><div class="color-ramp"></div><div class="legend-range"><span id="legend-min"></span><span id="legend-max"></span></div></div>
+      <div id="table-panel" class="table-panel" hidden>
+        <div class="table-titlebar"><div><b>测量数据</b><span id="table-summary"></span></div><select id="table-select" aria-label="选择测量表"></select><a id="download-csv" class="link-btn" hidden>导出 CSV ↗</a><button id="close-table" class="icon-btn" aria-label="关闭测量表">×</button></div>
+        <div id="table-scroll" class="table-scroll"><table id="measurement-table"></table></div>
+        <div class="table-pagination"><span id="table-page-info"></span><div><button id="table-prev">上一页</button><button id="table-next">下一页</button></div></div>
+      </div>
+    </main>
+    <aside id="inspector" class="inspector">
+      <div class="inspector-heading"><span>对象属性</span><span id="object-state" class="state-pill">—</span><button id="close-inspector" class="icon-btn inspector-close" aria-label="关闭属性面板">×</button></div>
+      <div class="stat-grid" id="object-stats"></div>
+      <div class="inspector-section"><div class="control-heading">显示设置</div>
+        <label class="field"><span>预览精度</span><select id="quality"><option value="fast">快速</option><option value="balanced" selected>均衡</option><option value="fine">精细</option></select></label>
+        <div id="retention-field"><label class="range-field"><span>三角面保留比例 <output id="retention-value">100%</output></span><input id="retention" type="range" min="1" max="100" step="1" value="100" aria-label="三角面保留比例"></label><p id="retention-info" class="subtle">100% 显示完整网格；仅在手动降低比例后简化</p></div>
+        <label class="range-field"><span>不透明度 <output id="opacity-value">100%</output></span><input id="opacity" type="range" min="10" max="100" value="100" aria-label="不透明度"></label>
+        <div class="check-row"><label class="check"><input id="show-grid" type="checkbox" checked> 参考网格</label><label class="check"><input id="show-box" type="checkbox"> 包围盒</label></div>
+        <label id="wireframe-field" class="check"><input id="wireframe" type="checkbox"> 线框显示</label>
+        <label id="scalar-field" class="field" hidden><span>颜色映射</span><select id="scalar-select"><option value="solid">单色材质</option></select></label>
+      </div>
+      <div class="inspector-section" id="section-controls">
+        <div class="control-heading">剖面视图 <label class="check"><input id="section-enabled" type="checkbox"> 启用</label></div>
+        <div id="section-fields" hidden>
+          <label class="field"><span>显示方式</span><select id="section-mode"><option value="cut">剖切模型 + 截面</option><option value="only">仅显示截面</option></select></label>
+          <label class="range-field"><span>方位角 <output id="azimuth-value">0°</output></span><input id="section-azimuth" type="range" min="-180" max="180" step="1" value="0" aria-label="剖面方位角"></label>
+          <label class="range-field"><span>仰角 <output id="elevation-value">0°</output></span><input id="section-elevation" type="range" min="-90" max="90" step="1" value="0" aria-label="剖面仰角"></label>
+          <label class="range-field"><span>剖面距离 <button type="button" id="section-center" class="text-btn">回到中心</button></span><input id="section-distance" type="range" min="-1" max="1" step="any" value="0" aria-label="剖面距离"></label>
+          <label class="field"><span>距模型中心 · 原始坐标单位</span><input id="section-distance-number" type="number" step="any" value="0" aria-label="精确剖面距离"></label>
+          <div class="check-row"><label class="check"><input id="section-flip" type="checkbox"> 反向剖切</label><label class="check"><input id="section-guide" type="checkbox" checked> 参考平面</label></div>
+          <button id="section-face" class="wide-btn">⊙ 正对剖面 <span>正交投影</span></button>
+          <p id="section-note" class="note">网格显示剖切截线；体数据显示灰度切片。</p>
+        </div>
+      </div>
+      <div id="volume-controls" class="inspector-section" hidden>
+        <div class="control-heading">体数据</div>
+        <label class="field"><span>显示方式</span><select id="volume-mode"><option value="mip">三维最大强度投影</option><option value="iso">等值面</option><option value="slices">三向切片</option></select></label>
+        <label class="range-field"><span>窗口下限 <output id="window-low-value"></output></span><input id="window-low" type="range" aria-label="窗口下限"></label>
+        <label class="range-field"><span>窗口上限 <output id="window-high-value"></output></span><input id="window-high" type="range" aria-label="窗口上限"></label>
+        <label class="range-field" id="iso-field" hidden><span>等值阈值 <output id="iso-value">50%</output></span><input id="iso" type="range" min="1" max="99" value="50" aria-label="等值阈值"></label>
+        <div id="slice-fields" hidden><label class="range-field"><span>X 切片 <output id="slice-x-value"></output></span><input id="slice-x" type="range" aria-label="X 切片"></label><label class="range-field"><span>Y 切片 <output id="slice-y-value"></output></span><input id="slice-y" type="range" aria-label="Y 切片"></label><label class="range-field"><span>Z 切片 <output id="slice-z-value"></output></span><input id="slice-z" type="range" aria-label="Z 切片"></label></div>
+        <label id="time-field" class="field" hidden><span>时间步</span><select id="time-step"></select></label>
+      </div>
+      <div id="label-controls" class="inspector-section" hidden><div class="control-heading">分割标签 <button id="all-labels" class="text-btn">显示全部</button></div><p class="subtle">点击标签可单独查看</p><div id="label-list" class="label-list"></div><p id="label-warning" class="note" hidden></p></div>
+      <div class="inspector-section"><div class="control-heading">数据详情</div><dl id="metadata-details"></dl><button id="show-table" class="wide-btn" hidden>▤ 查看测量表 <span id="measurement-count"></span></button><button id="download-preview" class="wide-btn" hidden>导出当前预览 PLY ↗</button><a id="download-original" class="wide-link" hidden>下载原始导出文件 ↗</a></div>
+      <div class="preview-note"><span>ⓘ</span><p id="preview-note">显示采用交互式预览，完整数据保留在解析目录中。</p></div>
+    </aside>
+  </div>
+  <footer class="app-footer"><span><i></i> <span id="app-status">正在连接本地数据服务</span></span><span>独立解析 · 本地查看 <b>v0.6</b></span></footer>
+  <dialog id="add-dialog"><form id="add-form"><div class="dialog-heading"><h2>导入三维数据</h2><button type="button" id="close-dialog" class="icon-btn" aria-label="关闭">×</button></div><p>原始文件由 Python 独立解析，完成后自动显示模型。支持 <b>.ORSSession / .ORSObject / .STL / .NPY</b>。</p><label class="field"><span>导入方式</span><select id="import-mode"><option value="path">本地文件路径（适合大文件）</option><option value="file">选择文件</option><option value="directory">已有解析目录</option></select></label><label class="field" id="path-field"><span id="path-label">本地文件路径</span><input id="folder-path" placeholder="D:\数据\sample.ORSSession" required autocomplete="off"></label><label class="field" id="file-field" hidden><span>选择要解析的文件</span><input id="import-file" type="file" accept=".ORSSession,.ORSObject,.orssession,.orsobject,.stl,.STL,.npy"></label><p class="import-hint">ORS 支持体数据、分割、网格与测量表。NPY 轴顺序为 ZYX / TZYX，默认体素间距为 1。输出保存在 imported 目录，原始文件保持不变。</p><div id="import-progress" class="import-progress" role="status" hidden></div><div id="add-error" class="form-error" hidden></div><div class="dialog-footer"><small>仅在本机处理，无需 Dragonfly</small><button id="confirm-add" class="primary" type="submit">解析并显示</button></div></form></dialog>
+  <div id="toast" class="toast" role="status" hidden></div>
+  <script type="module" src="app.js"></script>
+</body></html>
