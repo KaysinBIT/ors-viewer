@@ -109,13 +109,15 @@ export class SectionController {
       this.slice.visible=o.enabled;this.slice.material.uniforms.uWorldToVolume.value.copy(inverse);this.place(this.slice,point,normal);
     }
     if(this.live){
+      this.live.matrixAutoUpdate=false;this.live.matrix.copy(v.mesh.matrix);
       this.live.visible=o.enabled;this.exact.visible=false;this.cap.visible=false;this.fill=null;
       v.canvas.dataset.sectionFillStatus=o.enabled?'pending':'disabled';
       v.canvas.dataset.sectionFillMode=this.fillMode;
       this.live.material.uniforms.uPlane.value.set(normal.x,normal.y,normal.z,-normal.dot(point));
       if(o.enabled){
         const c=v.bounds.getCenter(new THREE.Vector3());
-        this.pending={type:'section',revision:this.revision,normal:normal.toArray(),constant:-normal.dot(c)-o.distance,
+        const e=v.alignment?.elements,transform=e?[0,1,2,3].map(r=>[0,1,2,3].map(col=>e[col*4+r])):null;
+        this.pending={type:'section',revision:this.revision,transform,normal:normal.toArray(),constant:-normal.dot(c)-o.distance,
           point:point.toArray(),center:c.toArray(),scale,epsilon:Math.max(v.bounds.getSize(new THREE.Vector3()).length()*1e-10,1e-20)};
         this.startWorker();this.dispatch();this.onStatus(this.workerFailed?'live':'updating');
       }else this.pending=null;

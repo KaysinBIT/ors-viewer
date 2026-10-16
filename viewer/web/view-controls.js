@@ -20,6 +20,7 @@ export function createViewControls({state, scene, mpr, element, updateSection}) 
     element('iso-field').hidden = mode !== VOLUME_MODES.surface;
     element('mpr-help').hidden = !active;
     applyMPRLayout(active);
+    mpr.setStandalone?.(!active && mode === VOLUME_MODES.slices && mpr.kind === 'reslice');
     scene?.volumeMode(active ? VOLUME_MODES.slices : mode);
     scene?.showGrid(!active && element('show-grid').checked);
     if (state.preview?.meta.kind === 'volume') updateSection();
@@ -35,7 +36,7 @@ export function createViewControls({state, scene, mpr, element, updateSection}) 
 
   function show3D() {
     state.faceSection = false;
-    if (state.object?.kind === 'mesh') {
+    if (state.object?.kind === 'mesh' || (state.object?.kind === 'labels' && state.labelMPRAvailable)) {
       state.meshMPR = false;
       updateMeshMode();
     } else if (state.object?.kind === 'volume' && element('volume-mode').value === VOLUME_MODES.mpr) {
@@ -48,7 +49,7 @@ export function createViewControls({state, scene, mpr, element, updateSection}) 
   }
 
   function toggleMPR() {
-    if (state.object?.kind === 'mesh') {
+    if (state.object?.kind === 'mesh' || (state.object?.kind === 'labels' && state.labelMPRAvailable)) {
       state.meshMPR = !state.meshMPR;
       updateMeshMode();
       return;

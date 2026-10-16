@@ -220,6 +220,7 @@ export class SceneView {
       if(meta.bounds)bounds.set(new THREE.Vector3(...meta.bounds[0]),new THREE.Vector3(...meta.bounds[1]));
       if(bounds.isEmpty()) bounds.set(new THREE.Vector3(-.5,-.5,-.5),new THREE.Vector3(.5,.5,.5));
     }
+    this.sourceBounds = bounds.clone();this.alignment=new THREE.Matrix4();
     this.bounds = bounds;
     const center=bounds.getCenter(new THREE.Vector3()),size=bounds.getSize(new THREE.Vector3());
     const scale=2/Math.max(size.x,size.y,size.z,1e-10);
@@ -229,6 +230,36 @@ export class SceneView {
     this.box.material.transparent = true;this.box.material.opacity=.5;this.scene.add(this.box);
     this.grid.position.z=normalized.min.z-.06;this.axes.position.z=normalized.min.z-.03;
     this.setTheme(this.theme);this.fit();this.dirty=true;
+  }
+
+  setAlignment(rows){
+    if(!this.sourceBounds)return;
+    this.alignment.set(...rows.flat());
+    if(this.mesh){this.mesh.matrixAutoUpdate=false;this.mesh.matrix.copy(this.alignment);}
+    if(this.volume){
+      const matrix=this.alignment.clone().multiply(new THREE.Matrix4().set(...this.volume.meta.matrix.flat()));
+      for(const object of [this.volume.mesh,...this.volume.planes,...this.volume.outlines]){object.matrixAutoUpdate=false;object.matrix.copy(matrix);}
+    }
+    this.bounds=this.sourceBounds.clone().applyMatrix4(this.alignment);
+    const center=this.bounds.getCenter(new THREE.Vector3()),size=this.bounds.getSize(new THREE.Vector3()),scale=2/Math.max(size.x,size.y,size.z,1e-10);
+    this.group.scale.setScalar(scale);this.group.position.copy(center).multiplyScalar(-scale);this.group.updateMatrixWorld(true);
+    const normalized=this.bounds.clone();normalized.min.sub(center).multiplyScalar(scale);normalized.max.sub(center).multiplyScalar(scale);
+    if(this.box){this.box.box.copy(normalized);this.box.updateMatrixWorld(true);}
+    this.grid.position.z=normalized.min.z-.06;this.axes.position.z=normalized.min.z-.03;this.dirty=true;
+  }
+
+  pickSource(event){
+    // A volume proxy box is not a CT surface. CT reference points come from MPR.
+    if(!this.mesh||!this.mesh.visible)return null;
+    const rect=this.canvas.getBoundingClientRect(),mouse=new THREE.Vector2((event.clientX-rect.left)/rect.width*2-1,1-(event.clientY-rect.top)/rect.height*2);
+    this.scene.updateMatrixWorld(true);const ray=new THREE.Raycaster();ray.setFromCamera(mouse,this.camera);
+    const hits=ray.intersectObject(this.mesh,false);
+    for(const hit of hits){
+      const material=Array.isArray(this.mesh.material)?this.mesh.material[hit.face.materialIndex]:this.mesh.material;
+      if(!material?.visible||material.clippingPlanes?.some(p=>p.distanceToPoint(hit.point)<0))continue;
+      return {point:hit.point.clone().applyMatrix4(this.mesh.matrixWorld.clone().invert()).toArray(),normal:hit.face.normal.toArray()};
+    }
+    return null;
   }
 
   addVolume(meta, arrays) {
@@ -299,7 +330,7 @@ export class SceneView {
     }
     material.needsUpdate=true;this.dirty=true;
   }
-  volumeMode(mode){if(!this.volume)return;this.volume.mode=mode;this.volume.mesh.visible=mode!=='slices';this.volume.planes.forEach(p=>p.visible=mode==='slices');this.volume.outlines.forEach(p=>p.visible=mode==='slices');this.volume.material.uniforms.uMode.value=mode==='iso'?1:0;this.dirty=true;}
+  volumeMode(mode){if(!this.volume)return;this.volume.mode=mode;this.volume.mesh.visible=mode!=='slices';this.volume.planes.forEach(p=>p.visible=mode==='slices'&&!this.resliceActive);this.volume.outlines.forEach(p=>p.visible=mode==='slices'&&!this.resliceActive);this.volume.material.uniforms.uMode.value=mode==='iso'?1:0;this.dirty=true;}
   sectionView(normal,point,reset=false){
     const up=Math.abs(normal.z)>.98?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1);
     if(this.camera.isOrthographicCamera&&!reset){

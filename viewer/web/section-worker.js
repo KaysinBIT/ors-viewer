@@ -1,11 +1,13 @@
 import { sectionContours } from './section-math.js';
 import { obliqueSectionFill } from './section-fill.js';
+import {sourcePlane} from './alignment-math.js';
 let positions,indices,serial=0,fillTimer;
 self.onmessage=({data})=>{
   if(data.type==='mesh'){++serial;clearTimeout(fillTimer);positions=data.positions;indices=data.indices;self.postMessage({type:'ready'});return;}
   if(data.type!=='section'||!positions)return;
   const job=++serial;clearTimeout(fillTimer);
-  const {lines,coplanarFlags}=sectionContours(positions,indices,data.normal,data.constant,data.center,data.scale,data.epsilon);
+  const plane=data.transform?sourcePlane(data.transform,data.normal,data.constant):data;
+  const {lines,coplanarFlags}=sectionContours(positions,indices,plane.normal,plane.constant,data.center,data.scale,data.epsilon,data.transform);
   self.postMessage({type:'section',revision:data.revision,lines,fillPending:true});
   // Publish the contour first. Superseded fill jobs must never cover a newer plane.
   fillTimer=setTimeout(()=>{

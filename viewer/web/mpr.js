@@ -1,14 +1,22 @@
-import { parsePacket } from './scene.js';
+import { parsePacket, labelColor } from './scene.js';
+import {ReslicePlanes} from './reslice-planes.js';
+import {poseMatrix,sourcePoint,transformPoint} from './alignment-math.js';
 import { AXES, IN_PLANE, clampIndex, planeTransform, imageToScreen, screenToIndices, LatestRequest } from './mpr-math.js';
 import {MeshSections} from './mesh-sections.js';
 import {meshPlaneTransform,meshToScreen,screenToMesh} from './mesh-sections-math.js';
 import {THEMES} from './themes.js';
 import {clampZoom,zoomImageTransform,zoomMeshTransform,panImageFocus,panMeshFocus} from './pane-view.js';
 
+async function resliceRequest(id,action,body,signal){
+  const response=await fetch(`/api/objects/${id}/${action}`,{method:'POST',signal,headers:{'Content-Type':'application/json','X-Viewer-Token':document.querySelector('meta[name=viewer-token]').content},body:JSON.stringify(body)});
+  if(!response.ok)throw new Error((await response.json()).error);return response;
+}
+
 export class MPRView {
   constructor(layout, scene, onPosition, onRange=()=>{}) {
     this.layout=layout;this.scene=scene;this.onPosition=onPosition;this.indices=[0,0,0];this.panes=[];
     this.low=0;this.high=1;this.generation=0;this.kind='volume';this.theme=THEMES.mono;this.fillMode='both';this.fillOpacity=.35;this.maximizedAxis=null;
+    if(scene)this.reslicePlanes=new ReslicePlanes(scene);
     if(scene)this.meshSections=new MeshSections(scene,data=>{
       this.meshResult=data;
       for(const p of this.panes){
@@ -45,20 +53,31 @@ export class MPRView {
       focusButton.onclick=()=>{if(!this.id)return;p.focus=this.crosshairFocus(p);this.draw(p);};
       resetButton.onclick=()=>{this.resetPane(p);this.draw(p);};
       p.queue=new LatestRequest(async(job,signal)=>{
+        if(job.pose)return parsePacket(await (await resliceRequest(job.id,'reslice',{pose:job.pose,axis,coordinate:job.index,time:job.time},signal)).arrayBuffer());
         const response=await fetch(`/api/objects/${job.id}/slice?axis=${axis}&index=${job.index}&time=${job.time}`,{signal});
         if(!response.ok)throw new Error((await response.json()).error);
         return parsePacket(await response.arrayBuffer());
       },(packet,job)=>{
         if(packet.meta.range)onRange(packet.meta.range);
-        p.packet=packet;p.loadedKey=job.key;const current=job.key===p.key;p.status.textContent=`${job.index} / ${this.shape[axis]-1} · ${current?'原始切片':'当前显示 · 更新中'}`;
-        p.canvas.dataset.loadedIndex=job.index;p.canvas.dataset.time=job.time;p.canvas.dataset.source='original';
+        p.packet=packet;p.loadedKey=job.key;const current=job.key===p.key;p.status.textContent=job.pose?`${Number(job.index.toPrecision(7))} · ${packet.meta.labels?'标签最近邻':'CT 线性采样'}${current?'':' · 更新中'}`:`${job.index} / ${this.shape[axis]-1} · ${current?'原始切片':'当前显示 · 更新中'}`;
+        p.canvas.dataset.loadedIndex=job.index;p.canvas.dataset.time=job.time;p.canvas.dataset.source=job.pose?'reslice':'original';
         p.panel.classList.toggle('pending',!current);this.colorize(p);this.draw(p);this.recordFrame(p,job.index);
       },error=>{p.status.textContent=error.message;p.panel.classList.add('pending');p.packet=null;this.draw(p);},true);
       new ResizeObserver(()=>this.draw(p)).observe(body);
       const locate=event=>{
         if(!this.active||!p.transform)return;
         const rect=canvas.getBoundingClientRect(),xy=this.kind==='mesh'?screenToMesh(p.transform,event.clientX-rect.left,event.clientY-rect.top):screenToIndices(p.transform,event.clientX-rect.left,event.clientY-rect.top);
-        if(!xy)return;const next=this.indices.slice();next[u]=this.kind==='mesh'?xy[0]/this.meshSections.scale+this.meshSections.center[u]:xy[0];next[v]=this.kind==='mesh'?xy[1]/this.meshSections.scale+this.meshSections.center[v]:xy[1];this.onPosition(next);
+        if(!xy)return;const next=this.indices.slice();
+        next[u]=this.kind==='mesh'?xy[0]/this.meshSections.scale+this.meshSections.center[u]:this.worldIndex(u,xy[0]);
+        next[v]=this.kind==='mesh'?xy[1]/this.meshSections.scale+this.meshSections.center[v]:this.worldIndex(v,xy[1]);
+        if(this.pickPoint&&this.picking){
+          if(event.type!=='pointerdown')return;
+          if(this.kind!=='mesh'&&p.loadedKey!==p.key)return;
+          if(this.kind==='reslice'&&!p.packet?.arrays.mask[xy[1]*p.packet.meta.shape_yx[1]+xy[0]])return;
+          const source=this.kind==='reslice'?sourcePoint(poseMatrix(this.pose),next):this.kind==='volume'?transformPoint(this.sourceMatrix,next):sourcePoint(this.alignmentMatrix||poseMatrix(null),next);
+          this.pickPoint(source);return;
+        }
+        this.onPosition(next);
       };
       canvas.addEventListener('contextmenu',event=>event.preventDefault());
       canvas.addEventListener('pointerdown',event=>{
@@ -83,12 +102,13 @@ export class MPRView {
     }
     this.readout=document.getElementById('mpr-readout');
     this.probe=new LatestRequest(async(job,signal)=>{
+      if(job.pose)return (await resliceRequest(job.id,'reslice-probe',{pose:job.pose,xyz:job.xyz,time:job.time},signal)).json();
       const [x,y,z]=job.xyz,response=await fetch(`/api/objects/${job.id}/voxel?x=${x}&y=${y}&z=${z}&time=${job.time}`,{signal});
       if(!response.ok)throw new Error((await response.json()).error);return response.json();
     },(result,job)=>{
-      this.readout.textContent=`X ${result.xyz[0]}　Y ${result.xyz[1]}　Z ${result.xyz[2]}　│　原始值 ${result.value}`;
+      this.readout.textContent=job.pose?`对齐坐标 ${job.xyz.map(x=>Number(x.toPrecision(6))).join(' / ')}　│　${result.interpolation==='linear'?'插值 '+result.sampled_value+' · 邻近原始值':'标签'} ${result.value}`:`X ${result.xyz[0]}　Y ${result.xyz[1]}　Z ${result.xyz[2]}　│　原始值 ${result.value}`;
       this.readout.title=`原始 ${result.dtype} · 世界坐标 ${result.world_xyz.map(n=>Number(n.toPrecision(7))).join(', ')}（源坐标单位）`;
-      this.readout.dataset.xyz=result.xyz.join(',');this.readout.dataset.value=result.value;
+      this.readout.dataset.xyz=(job.pose?job.xyz:result.xyz).join(',');this.readout.dataset.value=result.value;
       this.readout.dataset.time=String(result.time_step);this.readout.dataset.object=job.id;
     },error=>{this.readout.textContent=error.message;});
     window.addEventListener('keydown',event=>{
@@ -98,8 +118,10 @@ export class MPRView {
     });
   }
   clear() {
+    this.standalone=false;
     this.setActive(false);this.id=null;this.probe.reset();this.probeKey=null;
     this.meshSections?.clear();this.meshResult=null;this.meshPacket=null;
+    this.reslicePlanes?.clear();
     this.resetViews?.();
     for(const p of this.panes){p.queue.reset();p.packet=null;p.key=null;p.loadedKey=null;p.frames=[];for(const key of ['loadedIndex','requestedIndex','loadedPosition','requestedPosition','revision','fillMode','fillStatus','recentFrames','source','time','xyz'])delete p.canvas.dataset[key];}
   }
@@ -107,19 +129,31 @@ export class MPRView {
     // Reloads of the same source keep navigation; time changes invalidate planes.
     if(this.id!==id)this.resetViews?.();
     this.kind='volume';this.id=id;this.shape=meta.grid.shape_tzyx.slice(1).reverse();this.time=time;this.indices=indices.slice();
+    const spacing=meta.grid.spacing_xyz||[1,1,1];this.sourceMatrix=meta.grid.voxel_xyz_to_world||[[spacing[0],0,0,0],[0,spacing[1],0,0],[0,0,spacing[2],0],[0,0,0,1]];
+    this.reslicePlanes?.clear();
     this.meshSections?.clear();this.meshPacket=null;
     for(const p of this.panes){p.queue.reset();p.packet=null;p.key=null;p.loadedKey=null;}
     this.probe.reset();this.probeKey=null;
     if(this.active)this.position(indices);
   }
   meshSource(id,packet,coordinates){
+    this.reslicePlanes?.clear();
     if(this.id!==id)this.resetViews?.();
     this.kind='mesh';this.id=id;this.meshPacket=packet;this.indices=coordinates.slice();this.probe.reset();this.probeKey=null;this.meshResult=null;
     for(const p of this.panes){p.queue.reset();p.packet=null;p.key=null;p.loadedKey=null;}
     this.meshSections?.source(packet);if(this.active)this.position(coordinates);
   }
-  clamp(axis,value){return this.kind==='mesh'?Math.max(this.meshSections.bounds[0][axis],Math.min(this.meshSections.bounds[1][axis],value)):clampIndex(value,this.shape[axis]);}
-  step(axis){return this.kind==='mesh'?(this.meshSections.bounds[1][axis]-this.meshSections.bounds[0][axis])/200:1;}
+  resliceSource(id,info,pose,time,coordinates){
+    const same=this.id===id&&this.kind==='reslice'&&JSON.stringify(this.info)===JSON.stringify(info);
+    this.kind='reslice';this.id=id;this.info=info;this.pose=structuredClone(pose);this.shape=info.shape_xyz;this.time=time;this.indices=coordinates.slice();
+    this.meshSections?.clear();this.meshPacket=null;this.meshResult=null;this.probe.reset(false);this.probeKey=null;
+    for(const p of this.panes){p.queue.reset(false);p.packet=null;p.key=null;p.loadedKey=null;if(!same)p.focus=null;}
+    this.reslicePlanes?.source(info);this.reslicePlanes?.setActive(this.active||this.standalone);if(this.active||this.standalone)this.position(coordinates);
+  }
+  worldIndex(axis,index){return this.kind==='reslice'?this.info.origin[axis]+index*this.info.spacing[axis]:index;}
+  pixelIndex(axis,value){return this.kind==='reslice'?(value-this.info.origin[axis])/this.info.spacing[axis]:value;}
+  clamp(axis,value){const bounds=this.kind==='reslice'?this.info.bounds:this.meshSections?.bounds;return this.kind==='mesh'||this.kind==='reslice'?Math.max(bounds[0][axis],Math.min(bounds[1][axis],value)):clampIndex(value,this.shape[axis]);}
+  step(axis){return this.kind==='reslice'?this.info.spacing[axis]:this.kind==='mesh'?(this.meshSections.bounds[1][axis]-this.meshSections.bounds[0][axis])/200:1;}
   resetPane(p){p.zoom=1;p.focus=null;p.drag=null;if(p.zoomInput)p.zoomInput.value=100;if(p.zoomOutput)p.zoomOutput.textContent='100%';}
   resetViews(){this.setMaximized?.(null);for(const p of this.panes)this.resetPane(p);}
   setMaximized(axis=null){
@@ -149,7 +183,7 @@ export class MPRView {
     if(this.kind==='mesh'){const b=this.meshSections.normalized;return [(b[0][u]+b[1][u])/2,(b[0][v]+b[1][v])/2];}
     return [this.shape[u]/2,this.shape[v]/2];
   }
-  crosshairFocus(p){const [u,v]=IN_PLANE[p.axis];return this.kind==='mesh'?[u,v].map(i=>(this.indices[i]-this.meshSections.center[i])*this.meshSections.scale):[this.indices[u]+.5,this.shape[v]-this.indices[v]-.5];}
+  crosshairFocus(p){const [u,v]=IN_PLANE[p.axis];return this.kind==='mesh'?[u,v].map(i=>(this.indices[i]-this.meshSections.center[i])*this.meshSections.scale):[this.pixelIndex(u,this.indices[u])+.5,this.shape[v]-this.pixelIndex(v,this.indices[v])-.5];}
   setMeshDisplay(mode,opacity){
     this.fillMode=['line','fill','both'].includes(mode)?mode:'both';this.fillOpacity=Math.max(.1,Math.min(1,opacity));
     this.meshSections?.setDisplay(this.fillMode,this.fillOpacity);this.meshStatus();for(const p of this.panes)this.draw(p);
@@ -165,20 +199,22 @@ export class MPRView {
     }
     const note=document.getElementById('mesh-fill-status');if(note)note.textContent=this.fillMode==='line'?'仅显示截线。':warnings.length?warnings.join('；'):'闭合轮廓按内部 / 孔洞交替填充；原始网格和导出文件不改变。';
   }
-  setTheme(theme){this.theme=theme;this.meshSections?.setTheme(theme);for(const p of this.panes){p.panel.style.setProperty('--plane-color',theme.axes[p.axis]);this.draw(p);}}
+  setTheme(theme){this.theme=theme;this.meshSections?.setTheme(theme);this.reslicePlanes?.setTheme(theme);for(const p of this.panes){p.panel.style.setProperty('--plane-color',theme.axes[p.axis]);this.draw(p);}}
   setActive(active) {
     if(!active)this.setMaximized(null);
     this.active=active;document.body.classList.toggle('mpr-active',active);document.body.dataset.mprKind=this.kind;this.layout.classList.toggle('mpr-layout',active);
     this.meshSections?.setActive(active&&this.kind==='mesh');
-    for(const p of this.panes)p.canvas.setAttribute('aria-label',`${AXES[p.axis]} ${this.kind==='mesh'?'网格截面':'原始切面'}，滚轮移动，左键定位，右键平移`);
+    this.reslicePlanes?.setActive(active&&this.kind==='reslice');
+    for(const p of this.panes)p.canvas.setAttribute('aria-label',`${AXES[p.axis]} ${this.kind==='mesh'?'网格截面':this.kind==='reslice'?'对齐切面':'原始切面'}，滚轮移动，左键定位，右键平移`);
     if(this.scene?.camera.isPerspectiveCamera){this.scene.camera.zoom=active?(this.kind==='mesh'?1.05:1.6):1;this.scene.camera.updateProjectionMatrix();this.scene.dirty=true;}
     this.readout.hidden=!active;document.getElementById('volume-3d-heading').hidden=!active;
     if(active&&this.id)this.position(this.indices);
-    else if(!active){this.probe.reset();this.probeKey=null;for(const p of this.panes){p.queue.reset();p.key=null;}}
+    else if(!active){this.probe.reset();this.probeKey=null;for(const p of this.panes){p.queue.reset(this.kind!=='reslice');p.key=null;}}
   }
+  setStandalone(active){this.standalone=active;this.reslicePlanes?.setActive((active||this.active)&&this.kind==='reslice');if(active&&this.id)this.position(this.indices);}
   position(indices) {
-    if(!this.id)return;this.indices=indices.map((x,i)=>this.clamp(i,x));
-    if(!this.active)return;
+    if(!this.id||this.suspended)return;this.indices=indices.map((x,i)=>this.clamp(i,x));
+    if(!this.active&&!this.standalone)return;
     if(this.kind==='mesh'){
       this.meshSections.update(this.indices);
       const fmt=x=>Number(x.toPrecision(7)).toString();
@@ -187,28 +223,38 @@ export class MPRView {
       for(const p of this.panes){p.canvas.dataset.requestedPosition=String(this.indices[p.axis]);p.canvas.dataset.xyz=this.indices.join(',');p.canvas.dataset.source='mesh';this.draw(p);}
       return;
     }
+    if(this.kind==='reslice')this.reslicePlanes?.position(this.indices);
     for(const p of this.panes){
       const index=this.indices[p.axis],key=`${this.id}:${this.time}:${index}`;
       if(p.key!==key){p.key=key;p.status.textContent=`${index} / ${this.shape[p.axis]-1} · 读取中…`;p.panel.classList.add('pending');
-        p.queue.submit({id:this.id,index,time:this.time,key});}
+        p.queue.submit({id:this.id,index,time:this.time,key,pose:this.kind==='reslice'?this.pose:null});}
       p.canvas.dataset.requestedIndex=index;p.canvas.dataset.xyz=this.indices.join(',');this.draw(p);
     }
     const key=`${this.id}:${this.time}:${this.indices.join(',')}`;
     if(key!==this.probeKey){this.probeKey=key;this.readout.textContent=`X ${this.indices[0]}　Y ${this.indices[1]}　Z ${this.indices[2]}　│　读取原始值…`;
-      this.probe.submit({id:this.id,xyz:this.indices.slice(),time:this.time});}
+      this.probe.submit({id:this.id,xyz:this.indices.slice(),time:this.time,pose:this.kind==='reslice'?this.pose:null});}
   }
   window(low,high) { this.low=low;this.high=high;for(const p of this.panes)if(p.packet){this.colorize(p);this.draw(p);} }
   colorize(p) {
     const {meta,arrays}=p.packet,[rows,cols]=meta.shape_yx;
     p.image.width=cols;p.image.height=rows;const ctx=p.image.getContext('2d'),image=ctx.createImageData(cols,rows);
     const scale=255/Math.max(this.high-this.low,1e-20);
+    const colors=new Map();
     for(let row=0;row<rows;row++)for(let col=0;col<cols;col++){
       const value=arrays.pixels[row*cols+col],j=((rows-1-row)*cols+col)*4;
       const gray=Number.isFinite(value)?Math.max(0,Math.min(255,(value-this.low)*scale)):0;
       image.data[j]=image.data[j+1]=image.data[j+2]=gray;image.data[j+3]=255;
+      if(meta.labels){
+        if(!colors.has(value))colors.set(value,value?labelColor(value).getHex():0);
+        const color=colors.get(value);image.data[j]=color>>16;image.data[j+1]=(color>>8)&255;image.data[j+2]=color&255;
+      }
+      if(arrays.mask&&!arrays.mask[row*cols+col])image.data[j+3]=0;
     }
     ctx.putImageData(image,0,0);
-    if(p.loadedKey===p.key&&meta.index===this.indices[p.axis]&&meta.time_step===this.time)this.scene?.exactSlice(p.axis,p.image);
+    if(p.loadedKey===p.key&&meta.index===this.indices[p.axis]&&meta.time_step===this.time){
+      if(this.kind==='reslice'){if(this.reslicePlanes&&!this.reslicePlanes.image(p.axis,p.image))p.status.textContent+=' · 超出显卡纹理上限，仅显示二维切面';}
+      else this.scene?.exactSlice(p.axis,p.image);
+    }
   }
   draw(p) {
     if(!this.active||!this.id)return;
@@ -225,7 +271,7 @@ export class MPRView {
     ctx.save();ctx.transform(t.a,0,t.c,t.d,t.e,t.f);ctx.imageSmoothingEnabled=false;
     ctx.globalAlpha=p.loadedKey===p.key?1:.35;ctx.drawImage(p.image,0,0);ctx.restore();
     const line=(a,b,axis)=>{ctx.setLineDash(this.theme.dashes[axis]);ctx.beginPath();ctx.moveTo(...imageToScreen(t,...a));ctx.lineTo(...imageToScreen(t,...b));this.strokeCrosshair(ctx,axis);};
-    const col=this.indices[u]+.5,row=t.rows-this.indices[v]-.5;
+    const col=this.pixelIndex(u,this.indices[u])+.5,row=t.rows-this.pixelIndex(v,this.indices[v])-.5;
     line([col,0],[col,t.rows],u);line([0,row],[t.cols,row],v);
     const xy=imageToScreen(t,col,row);ctx.setLineDash([]);ctx.strokeStyle=this.theme.text;ctx.lineWidth=1;ctx.strokeRect(xy[0]-3,xy[1]-3,6,6);
   }
@@ -264,6 +310,7 @@ export class MPRView {
   }
   visiblePanes(){return this.maximizedAxis===null?this.panes:[this.panes[this.maximizedAxis]];}
   ready(){
+    if(this.suspended)return false;
     const panes=this.visiblePanes();
     if(this.kind==='mesh')return Boolean(this.meshResult)&&this.meshSections.resultRevision===this.meshSections.revision&&(this.fillMode==='line'||!panes.some(p=>this.meshResult.fills?.[p.axis]?.status==='pending'));
     return panes.every(p=>p.packet&&p.loadedKey===p.key)&&this.readout.dataset.xyz===this.indices.join(',')&&this.readout.dataset.time===String(this.time)&&this.readout.dataset.object===this.id;

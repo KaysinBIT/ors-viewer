@@ -4,18 +4,24 @@ export function sectionSegments(positions, indices, normal, constant, center, sc
 }
 
 // Fill validation also needs the edges of triangles lying on the cutting plane.
-export function sectionContours(positions, indices, normal, constant, center, scale, epsilon) {
-  return intersections(positions,indices,normal,constant,center,scale,epsilon,true);
+export function sectionContours(positions, indices, normal, constant, center, scale, epsilon, transform=null, groups=null, maximumSegments=Infinity) {
+  return intersections(positions,indices,normal,constant,center,scale,epsilon,true,transform,groups,maximumSegments);
 }
 
-function intersections(positions, indices, normal, constant, center, scale, epsilon, includeCoplanar) {
+function intersections(positions, indices, normal, constant, center, scale, epsilon, includeCoplanar, transform=null, groups=null, maximumSegments=Infinity) {
   const lines=[],flags=[];
   const emit=(a,b,flat=0)=>{
     if(Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])<=epsilon)return;
-    for(const p of [a,b])lines.push((p[0]-center[0])*scale,(p[1]-center[1])*scale,(p[2]-center[2])*scale);
+    if(lines.length/6>=maximumSegments)throw new Error('截线数量超出显示内存限制，未截断或自动简化；请调整切面或手动降低网格保留比例');
+    for(const p of [a,b])for(let axis=0;axis<3;axis++){
+      const r=transform?.[axis],value=r?r[0]*p[0]+r[1]*p[1]+r[2]*p[2]+r[3]:p[axis];
+      lines.push((value-center[axis])*scale);
+    }
     if(includeCoplanar)flags.push(flat);
   };
-  for(let i=0;i<indices.length;i+=3){
+  // A group contains original face indices, never simplified/reconstructed faces.
+  for(const group of groups||[null])for(let cursor=0;cursor<(group?group.length:indices.length/3);cursor++){
+    const i=3*(group?group[cursor]:cursor);
     const a=indices[i]*3,b=indices[i+1]*3,c=indices[i+2]*3;
     const da=normal[0]*positions[a]+normal[1]*positions[a+1]+normal[2]*positions[a+2]+constant;
     const db=normal[0]*positions[b]+normal[1]*positions[b+1]+normal[2]*positions[b+2]+constant;

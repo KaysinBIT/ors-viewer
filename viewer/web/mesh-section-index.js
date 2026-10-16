@@ -2,7 +2,7 @@
 export function buildSectionIndex(positions,indices,bounds,resolution=0){
   const count=indices.length/3;if(!resolution&&count<4096)return null;
   const r=resolution||Math.min(64,Math.max(4,2**Math.ceil(Math.log2(Math.cbrt(count/64)))));
-  const cells=r*r*r,counts=new Uint32Array(cells),bins=new Uint32Array(count),boxes=new Float32Array(cells*6);
+  const cells=r*r*r,counts=new Uint32Array(cells),bins=new Uint32Array(count),boxes=new Float64Array(cells*6);
   boxes.fill(Infinity);for(let i=0;i<cells;i++)for(let d=3;d<6;d++)boxes[i*6+d]=-Infinity;
   const inverse=bounds[0].map((lo,d)=>bounds[1][d]>lo?r/(bounds[1][d]-lo):0);
   for(let face=0;face<count;face++){
@@ -18,6 +18,17 @@ export function buildSectionIndex(positions,indices,bounds,resolution=0){
   const cursors=offsets.slice(0,-1),faces=new Uint32Array(count);
   for(let i=0;i<count;i++)faces[cursors[bins[i]]++]=i;
   return {boxes,offsets,faces,occupied:new Uint32Array(occupied)};
+}
+export function queryPlaneIndex(index,normal,constant,epsilon){
+  if(!index)return null;const groups=[];
+  for(const cell of index.occupied){
+    const offset=cell*6;let low=constant,high=constant;
+    for(let axis=0;axis<3;axis++){
+      const a=normal[axis]*index.boxes[offset+axis],b=normal[axis]*index.boxes[offset+3+axis];low+=Math.min(a,b);high+=Math.max(a,b);
+    }
+    if(low<=epsilon&&high>=-epsilon)groups.push(index.faces.subarray(index.offsets[cell],index.offsets[cell+1]));
+  }
+  return groups;
 }
 export function querySectionIndex(index,coordinates,epsilon,selected=[true,true,true]){
   if(!index)return selected.map(on=>on?null:[]);

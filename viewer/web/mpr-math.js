@@ -30,7 +30,12 @@ export function screenToIndices(t, x, y) {
 export class LatestRequest {
   constructor(fetcher, accept, fail, progressive=false) { this.fetcher=fetcher;this.accept=accept;this.fail=fail;this.revision=0;this.progressive=progressive;this.minimumRevision=0;this.lastAcceptedRevision=0; }
   submit(value) { this.pending={value, revision:++this.revision};this.dispatch(); }
-  reset() { this.minimumRevision=++this.revision;this.lastAcceptedRevision=this.revision;this.pending=null;this.controller?.abort(); }
+  reset(cancel=true) {
+    this.minimumRevision=++this.revision;this.lastAcceptedRevision=this.revision;this.pending=null;
+    // CPU reslicing cannot cancel a server computation. Keep the slot occupied
+    // until it finishes, discard its old generation and then send only the latest pose.
+    if(cancel)this.controller?.abort();
+  }
   async dispatch() {
     if (this.busy || !this.pending) return;
     this.busy=true;const job=this.pending;this.pending=null;this.controller=new AbortController();

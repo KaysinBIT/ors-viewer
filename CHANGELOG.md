@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0rc1 (candidate)
+
+- Add dataset-wide rigid orientation with a shared source-space pivot, manual XYZ angles, quarter-turn buttons, reference faces and three-point alignment.
+- Keep XYZ slicing axes fixed; rotate mesh intersection planes back into source space without changing or reducing the original mesh.
+- Reslice CT with linear interpolation and dense/sparse segmentation with nearest-neighbour label IDs; synchronize world-axis 3D locator planes.
+- Save alignment preferences separately and restore the original pose. Source arrays, measurement tables and PLY exports remain unchanged.
+- Extend automated coverage and the offline manual. Browser interaction and visual acceptance remain pending.
+
 ## 1.1.0
 
 - Fill arbitrary-angle mesh and segmentation sections, preserving holes and rejecting unverified contours.

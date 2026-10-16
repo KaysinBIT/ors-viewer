@@ -26,6 +26,14 @@ export class MeshSections {
       this.planes.push(plane);this.edges.push(edge);this.lines.push(line);this.caps.push(cap);this.root.add(plane,edge,cap,line);
     }
     this.root.visible=this.active;this.setTheme(this.theme);
+    this.poseKey=JSON.stringify(this.view.alignment?.elements);
+  }
+  alignmentChanged(){
+    if(!this.packet)return;
+    this.center=this.view.bounds.getCenter(new THREE.Vector3()).toArray();this.scale=this.view.group.scale.x;
+    this.bounds=[this.view.bounds.min.toArray(),this.view.bounds.max.toArray()];this.normalized=this.bounds.map(b=>b.map((x,i)=>(x-this.center[i])*this.scale));
+    this.poseKey=JSON.stringify(this.view.alignment?.elements);this.result=null;this.resultRevision=-1;
+    this.lines.forEach(o=>o.visible=false);this.caps.forEach(o=>o.visible=false);
   }
   setTheme(theme){this.theme=theme;for(let i=0;i<(this.planes?.length||0);i++)for(const o of [this.planes[i],this.edges[i],this.lines[i],this.caps[i]])o.material.color.set(theme.axes[i]);this.view.dirty=true;}
   setDisplay(mode,opacity){
@@ -63,7 +71,9 @@ export class MeshSections {
     }
     this.applyDisplay();
     this.view.meshPlaneCoordinates=coordinates.slice();this.view.dirty=true;
-    this.pending={type:'sections',revision:this.revision,coordinates:coordinates.slice(),center:this.center,scale:this.scale,
+    const e=this.view.alignment?.elements,rotated=e?.some((x,i)=>x!==(i%5===0?1:0));
+    const transform=rotated?[0,1,2,3].map(r=>[0,1,2,3].map(c=>e[c*4+r])):null;
+    this.pending={type:'sections',revision:this.revision,poseKey:this.poseKey,transform,coordinates:coordinates.slice(),center:this.center,scale:this.scale,
       epsilon:Math.max(this.view.bounds.getSize(new THREE.Vector3()).length()*1e-10,1e-20)};
     if(this.failed){this.onStatus('error','截线计算不可用，请重新选择对象重试。');return;}
     this.onStatus('pending');this.start();this.dispatch();
@@ -77,7 +87,7 @@ export class MeshSections {
         if(data.type==='ready')this.workerReady=true;
         else {
           if(data.type==='error'||(data.type==='sections'&&data.phase!=='fill'))this.busy=false;
-          const accept=data.phase==='lines'?data.revision>=this.resultRevision:data.revision===this.revision;
+          const accept=data.poseKey===this.poseKey&&(data.phase==='lines'?data.revision>=this.resultRevision:data.revision===this.revision);
           if(this.active&&accept){
             if(data.type==='error')this.onStatus('error',data.message);
             else if(data.type==='fill-error'){
@@ -99,7 +109,8 @@ export class MeshSections {
       };
       worker.onerror=()=>{this.failed=true;worker.terminate();this.worker=null;this.busy=false;this.onStatus('error','网格截线计算失败，三维定位仍可操作。请重新选择对象重试。');};
       const positions=new Float32Array(packet.arrays.positions),indices=new Uint32Array(packet.arrays.indices);
-      worker.postMessage({type:'mesh',positions,indices,bounds:this.bounds},[positions.buffer,indices.buffer]);
+      const b=this.view.sourceBounds;
+      worker.postMessage({type:'mesh',positions,indices,bounds:b?[b.min.toArray(),b.max.toArray()]:this.bounds},[positions.buffer,indices.buffer]);
     }catch(error){this.failed=true;this.worker?.terminate();this.worker=null;this.onStatus('error','无法准备网格截线：'+error.message);}
   }
   dispatch(){if(this.worker&&this.workerReady&&!this.busy&&this.pending){this.busy=true;const job=this.pending;this.pending=null;this.worker.postMessage(job);}}

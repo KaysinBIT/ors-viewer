@@ -1,10 +1,12 @@
 import {meshSections} from './mesh-sections-math.js';
 import {contourFill} from './contour-fill.js';
-import {buildSectionIndex,querySectionIndex} from './mesh-section-index.js';
+import {buildSectionIndex,querySectionIndex,queryPlaneIndex} from './mesh-section-index.js';
+import {sectionContours} from './section-math.js';
+import {sourcePlane} from './alignment-math.js';
 let positions,indices,index,cache,serial=0,fillTimer;
 const pending=()=>({status:'pending',message:'填充后台更新中',positions:new Float32Array(),indices:new Uint32Array(),offsets:new Uint32Array(),boundary:new Float32Array(),loops:0,holes:0});
 function snapshot(data,phase){
-  return {type:'sections',phase,revision:data.revision,coordinates:data.coordinates.slice(),lines:cache.lines,counts:cache.counts,coplanar:cache.coplanar,
+  return {type:'sections',phase,revision:data.revision,poseKey:data.poseKey,coordinates:data.coordinates.slice(),lines:cache.lines,counts:cache.counts,coplanar:cache.coplanar,
     fills:cache.fills.map((f,axis)=>f?.coordinate===data.coordinates[axis]?f.result:pending())};
 }
 self.onmessage=({data})=>{
@@ -16,8 +18,17 @@ self.onmessage=({data})=>{
   if(data.type!=='sections'||!positions)return;
   const job=++serial;clearTimeout(fillTimer);
   try{
-    const changed=data.coordinates.map((x,i)=>x!==cache.coordinates[i]);
-    const result=meshSections(positions,indices,data.coordinates,data.center,data.scale,data.epsilon,2000000,querySectionIndex(index,data.coordinates,data.epsilon,changed));
+    const changed=data.coordinates.map((x,i)=>x!==cache.coordinates[i]||data.poseKey!==cache.poseKey);
+    let result;
+    if(data.transform){
+      result={lines:[],counts:[],coplanar:[],coplanarFlags:[]};
+      for(let axis=0;axis<3;axis++)if(changed[axis]){
+        const normal=[0,0,0];normal[axis]=1;const p=sourcePlane(data.transform,normal,-data.coordinates[axis]);
+        const cut=sectionContours(positions,indices,p.normal,p.constant,data.center,data.scale,data.epsilon,data.transform,queryPlaneIndex(index,p.normal,p.constant,data.epsilon),2000000);
+        result.lines[axis]=cut.lines;result.counts[axis]=cut.lines.length/6;result.coplanarFlags[axis]=cut.coplanarFlags;result.coplanar[axis]=cut.coplanarFlags.some(Boolean);
+      }
+    }else result=meshSections(positions,indices,data.coordinates,data.center,data.scale,data.epsilon,2000000,querySectionIndex(index,data.coordinates,data.epsilon,changed));
+    cache.poseKey=data.poseKey;
     for(let axis=0;axis<3;axis++)if(changed[axis]){
       cache.lines[axis]=result.lines[axis];cache.counts[axis]=result.counts[axis];cache.coplanar[axis]=result.coplanar[axis];cache.flags[axis]=result.coplanarFlags[axis];cache.fills[axis]=null;
     }

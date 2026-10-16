@@ -8,6 +8,8 @@ import {LatestRequest} from './mpr-math.js';
 import {createViewControls} from './view-controls.js';
 import {requestJson as api, requestPreview} from './data-client.js';
 import {createPreviewPLY} from './export-ply.js';
+import {AlignmentPanel} from './alignment-panel.js';
+import {poseMatrix} from './alignment-math.js';
 import {AXIS_KEYS, PERCENT_SCALE, TABLE_PAGE_SIZE, TOAST_DURATION_MS, IMPORT_POLL_INTERVAL_MS, DOWNLOAD_URL_LIFETIME_MS} from './ui-constants.js';
 
 const $=id=>document.getElementById(id);
@@ -40,15 +42,22 @@ async function loadCatalog(selectId){
   $('empty-state').hidden=state.datasets.length>0;
   if(!state.datasets.length){$('app-status').textContent='本地服务已连接 · 尚未添加数据';return;}
   $('dataset-select').value=selectId||state.datasets[0].id;
-  switchDataset();
+  await switchDataset();
 }
-function switchDataset(){
+async function switchDataset(){
+  ++state.request;state.abort?.abort();state.alignmentAbort?.abort();mpr.clear();alignment.cancel();alignment.panel.hidden=true;
+  state.object=null;state.preview=null;
   state.dataset=state.datasets.find(d=>d.id===$('dataset-select').value);state.filter='all';$('search').value='';$('show-hidden').checked=false;
+  const dataset=state.dataset;
+  try{
+    const result=await api(`/api/datasets/${dataset.id}/alignment`);if(state.dataset!==dataset)return;
+    state.alignment=state.alignments?.get(dataset.id)||result.pose;alignment.load(dataset.id,{...result,pose:state.alignment});
+  }catch(error){if(state.dataset===dataset)showError('无法准备数据集坐标：'+error.message);return;}
   document.querySelectorAll('#type-filters button').forEach(b=>b.classList.toggle('active',b.dataset.kind==='all'));
   $('dataset-caption').textContent=`${state.dataset.objects.length} 个对象 · ${state.dataset.raw_complete?'原始记录已完整提取':'原始记录提取未完成'}`;
   $('app-status').textContent=`已连接 · ${state.dataset.name}`;
   renderList();
-  const first=state.dataset.objects.find(o=>!o.hidden)||state.dataset.objects[0];selectObject(first.id);
+  const first=state.dataset.objects.find(o=>!o.hidden)||state.dataset.objects[0];await selectObject(first.id);
 }
 function renderList(){
   const search=$('search').value.toLowerCase(),showHidden=$('show-hidden').checked;
@@ -67,12 +76,18 @@ function renderList(){
 async function selectObject(id){
   const object=state.dataset.objects.find(o=>o.id===id);if(!object)return;
   resetObjectView(object);
-  try{const meta=await api(objectUrl('metadata'));if(state.object.id!==id)return;state.meta=meta;renderMetadata();await loadPreview();}
-  catch(error){if(state.object.id===id){showError(error.message);$('loading').hidden=true;}}
+  try{const meta=await api(objectUrl('metadata'));if(state.object?.id!==id)return;state.meta=meta;renderMetadata();await loadPreview();}
+  catch(error){if(state.object?.id===id){showError(error.message);$('loading').hidden=true;}}
 }
 function resetObjectView(object){
+  alignment.ready=false;
+  state.labelMPRAvailable=object.kind==='labels';
+  $('mesh-fill-mode').closest('label').hidden=object.kind==='labels';
+  $('mesh-fill-opacity-field').hidden=object.kind==='labels'||$('mesh-fill-mode').value==='line';
+  $('mesh-fill-status').hidden=object.kind==='labels';
   ++state.request;state.abort?.abort();
-  mpr.clear();state.meshMPR=false;$('mesh-mpr-controls').hidden=true;$('section-controls').hidden=false;$('mpr-toggle').hidden=object.kind==='labels';$('volume-mode').value='mpr';
+  state.alignmentAbort?.abort();state.alignmentRevision=(state.alignmentRevision||0)+1;mpr.suspended=false;
+  mpr.clear();state.meshMPR=false;$('mesh-mpr-controls').hidden=true;$('section-controls').hidden=false;$('mpr-toggle').hidden=false;$('volume-mode').value='mpr';
   state.object=object;state.selectedLabel=0;state.tableStart=0;state.meta=null;state.preview=null;
   if(scene?.camera.isOrthographicCamera)scene.perspective();
   $('retention').value=100;$('retention-value').textContent='100%';$('section-enabled').checked=false;$('section-distance').value=0;$('section-distance-number').value=0;$('section-fields').hidden=true;
@@ -141,7 +156,9 @@ function isCurrentPreview(request){
 }
 function applyPreviewPacket(packet, previousScalar) {
   state.preview = packet;
+  alignment.ready=true;
   scene.load(packet);
+  scene.setAlignment(poseMatrix(state.alignment));
   scene.opacity(Number($('opacity').value) / PERCENT_SCALE);
   scene.wireframe($('wireframe').checked);
   scene.showGrid($('show-grid').checked);
@@ -166,6 +183,7 @@ function configurePreviewKind(packet) {
   }
   $('render-status').textContent = `${meta.focus_label?'标签 '+meta.focus_label+' · ':''}${meta.simplified===false?'原始网格':'当前显示'} ${fmt(meta.preview_triangles||0)} 三角形`;
   if (meta.kind === 'mesh') setupMeshMPR(packet);
+  if (meta.kind === 'labels') setupReslice().catch(error=>showError(error.message));
 }
 function updateLabelPreview(meta) {
   const missing = meta.missing_labels || [];
@@ -196,11 +214,12 @@ function updateScalarOptions(meta, previousScalar) {
   }
 }
 function setupVolume(meta){
-  const previous=mpr.id===state.object.id?mpr.indices:null;
+  const previous=mpr.id===state.object.id&&mpr.kind==='volume'?mpr.indices:null;
   const [min,max]=meta.range;
   ['window-low','window-high'].forEach((key,i)=>{const input=$(key);input.min=min;input.max=max>min?max:min+1;input.step='any';input.value=meta.window[i];});
   const indices=[];
   AXIS_KEYS.forEach((axis,i)=>{const n=meta.original_shape_tzyx[3-i],input=$('slice-'+axis);input.min=0;input.max=n-1;input.step=1;input.value=previous?.[i]??Math.floor((n-1)/2);indices.push(Number(input.value));});
+  if(state.alignment?.enabled){updateWindow();setupReslice().catch(error=>showError(error.message));return;}
   mpr.source(state.object.id,state.meta,meta.time_step,indices);setSlicePosition(indices);
   updateWindow();updateVolumeMode();scene.iso(Number($('iso').value)/PERCENT_SCALE);
 }
@@ -213,8 +232,8 @@ function updateWindow(event){
   $('window-low-value').textContent=number(low);$('window-high-value').textContent=number(high);scene?.setWindow(low,high);mpr.window(low,high);
 }
 function setSlicePosition(indices){
-  if(state.object?.kind==='mesh'){updateMeshPosition(indices);return;}
-  AXIS_KEYS.forEach((axis,i)=>{const input=$('slice-'+axis);input.value=indices[i];const value=Number(input.value);$('slice-'+axis+'-value').textContent=value;scene?.slice(i,value);});
+  if(state.object?.kind==='mesh'||state.object?.kind==='labels'){updateMeshPosition(indices);return;}
+  AXIS_KEYS.forEach((axis,i)=>{const input=$('slice-'+axis);input.value=indices[i];const value=Number(input.value);$('slice-'+axis+'-value').textContent=number(value);if(mpr.kind==='volume')scene?.slice(i,value);});
   mpr.position(AXIS_KEYS.map(axis=>Number($('slice-'+axis).value)));
 }
 function updateSlice(){setSlicePosition(AXIS_KEYS.map(axis=>Number($('slice-'+axis).value)));}
@@ -222,8 +241,56 @@ function setupMeshMPR(packet){
   const bounds=[scene.bounds.min.toArray(),scene.bounds.max.toArray()],previous=mpr.id===state.object.id&&mpr.kind==='mesh'?mpr.indices:null;
   const coordinates=bounds[0].map((x,i)=>Math.max(x,Math.min(bounds[1][i],previous?.[i]??(x+bounds[1][i])/2)));
   mpr.meshSource(state.object.id,packet,coordinates);
+  mpr.alignmentMatrix=poseMatrix(state.alignment);
   AXIS_KEYS.forEach((axis,i)=>{for(const suffix of ['', '-number']){const input=$('mesh-'+axis+suffix);input.min=bounds[0][i];input.max=bounds[1][i];input.step='any';input.disabled=bounds[0][i]===bounds[1][i];}});
   updateMeshPosition(coordinates);updateMeshMode();
+}
+function setCoordinateRanges(prefix,bounds){
+  AXIS_KEYS.forEach((axis,i)=>{for(const suffix of prefix==='mesh'?['','-number']:['']){
+    const input=$(prefix+'-'+axis+suffix);input.min=bounds[0][i];input.max=bounds[1][i];input.step='any';input.disabled=bounds[0][i]===bounds[1][i];
+  }});
+}
+async function setupReslice(snap=null){
+  const objectId=state.object.id,revision=state.alignmentRevision=(state.alignmentRevision||0)+1;
+  state.alignmentAbort?.abort();const controller=state.alignmentAbort=new AbortController();
+  const pose=structuredClone(state.alignment),previous=mpr.id===objectId&&mpr.kind==='reslice'?mpr.indices.slice():null;
+  mpr.suspended=true;mpr.reslicePlanes?.clear();mpr.probe.reset(false);
+  for(const p of mpr.panes){p.queue.reset(false);p.packet=null;p.key=null;p.loadedKey=null;p.transform=null;p.status.textContent='更新对齐坐标…';mpr.draw(p);}
+  if(scene.volume)for(const p of [...scene.volume.planes,...scene.volume.outlines])p.visible=false;
+  try{
+    const info=await api(`/api/objects/${objectId}/reslice-info`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json','X-Viewer-Token':token()},body:JSON.stringify({pose})});
+    if(revision!==state.alignmentRevision||state.object?.id!==objectId)return;
+    const coordinates=info.bounds[0].map((lo,i)=>Math.max(lo,Math.min(info.bounds[1][i],previous?.[i]??(lo+info.bounds[1][i])/2)));
+    if(snap)coordinates[snap.axis]=Math.max(info.bounds[0][snap.axis],Math.min(info.bounds[1][snap.axis],snap.coordinate));
+    mpr.resliceSource(objectId,info,pose,state.object.kind==='volume'?Number($('time-step').value||0):0,coordinates);mpr.suspended=false;
+    if(state.object.kind==='volume'){
+      setCoordinateRanges('slice',info.bounds);setSlicePosition(coordinates);updateVolumeMode();scene.iso(Number($('iso').value)/PERCENT_SCALE);
+      $('mpr-help').textContent='XYZ 为固定世界轴，位置单位沿用源数据。CT 灰度按线性插值显示；原始体素数据保持不变。';
+    }else{setCoordinateRanges('mesh',info.bounds);updateMeshPosition(coordinates);updateMeshMode();}
+    if(snap&&!mpr.active)viewControls.toggleMPR();
+    mpr.position(coordinates);
+  }catch(error){
+    if(error.name==='AbortError')return;
+    if(revision===state.alignmentRevision){mpr.id=null;mpr.suspended=true;for(const p of mpr.panes)p.status.textContent=error.message;throw error;}
+  }
+}
+async function applyAlignment(pose,snap=null){
+  state.alignment=structuredClone(pose);(state.alignments??=new Map()).set(state.dataset.id,state.alignment);
+  if(!state.preview||!scene)return;
+  scene.setAlignment(poseMatrix(pose));mpr.alignmentMatrix=poseMatrix(pose);
+  updateSection();
+  if(state.object.kind==='mesh'){
+    mpr.meshSections.alignmentChanged();mpr.meshResult=null;for(const p of mpr.panes)p.focus=null;
+    const bounds=mpr.meshSections.bounds;setCoordinateRanges('mesh',bounds);
+    const coordinates=mpr.indices.map((x,i)=>Math.max(bounds[0][i],Math.min(bounds[1][i],x)));
+    if(snap)coordinates[snap.axis]=snap.coordinate;updateMeshPosition(coordinates);
+    if(snap&&!mpr.active)viewControls.toggleMPR();
+  }else if(state.object.kind==='labels'||pose.enabled)await setupReslice(snap);
+  else{
+    state.alignmentAbort?.abort();state.alignmentRevision++;mpr.suspended=false;setupVolume(state.preview.meta);
+    $('mpr-help').textContent='点击或拖动十字线定位，滚轮翻片。二维读取原始切片，按源数据轴显示。';
+  }
+  updateSection();if(state.faceSection)section?.face();
 }
 function updateMeshPosition(coordinates){
   coordinates=coordinates.map((x,i)=>mpr.clamp(i,x));
@@ -317,6 +384,10 @@ function exportPreview(){
 }
 const token=()=>document.querySelector('meta[name=viewer-token]').content;
 const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token()},body:JSON.stringify(body)});
+const alignment=new AlignmentPanel({host:$('inspector'),scene,mpr,post,onChange:applyAlignment,notify:toast,onPickMode:mode=>{
+  if(mode==='points'&&state.object?.kind==='volume'&&!mpr.active)viewControls.toggleMPR();
+  if(mode==='face'&&mpr.maximizedAxis!==null)mpr.setMaximized(null);
+}});
 const picker=new LocalFilePicker(post);
 const serverSettings=new ServerSettings(api,post);
 function applyTheme(key){
@@ -398,7 +469,7 @@ AXIS_KEYS.forEach((axis,i)=>{
   $('mesh-'+axis+'-number').oninput=event=>update(event.target.value);
   $('mesh-'+axis+'-number').onchange=event=>{update(event.target.value);event.target.value=mpr.indices[i];};
 });
-$('mesh-center').onclick=()=>updateMeshPosition(mpr.meshSections.center.slice());
+$('mesh-center').onclick=()=>updateMeshPosition(mpr.kind==='reslice'?mpr.info.bounds[0].map((x,i)=>(x+mpr.info.bounds[1][i])/2):mpr.meshSections.center.slice());
 function updateMeshDisplay(){
   const mode=$('mesh-fill-mode').value,opacity=Number($('mesh-fill-opacity').value);
   $('mesh-fill-opacity-field').hidden=mode==='line';$('mesh-fill-opacity-value').textContent=opacity+'%';mpr.setMeshDisplay(mode,opacity/PERCENT_SCALE);

@@ -20,6 +20,8 @@ import webbrowser
 import numpy as np
 from .preview import PreviewCache, safe_file, unit_of
 from .slices import slice_packet, voxel_value
+from .alignment import dataset_alignment, save_alignment
+from .reslice import geometry as reslice_geometry, reslice_packet, reslice_probe
 from .imports import ImportJobs, EXTENSIONS
 from .file_browser import list_directory, create_directory
 from .settings import validate_directory, save_directory, load_port, save_port, validate_port, load_theme, save_theme
@@ -101,7 +103,7 @@ class Catalog:
         return folder, json.loads(safe_file(folder, 'metadata.json').read_text('utf-8'))
 
     def public(self):
-        with self.lock: return list(self.datasets.values())
+        with self.lock: return [{k: v for k, v in d.items() if not k.startswith('_')} for d in self.datasets.values()]
 
 
 def table_data(folder, meta, group, start=0, limit=DEFAULT_TABLE_PAGE_SIZE):
@@ -164,10 +166,12 @@ def handler(catalog, cache, token, imports=None, workspace=None):
             try:
                 url = urlsplit(self.path);route = unquote(url.path);q = parse_qs(url.query)
                 if route == '/api/catalog': return self.json({'datasets': catalog.public()})
-                if route == '/api/health': return self.json({'ok': True, 'version': '1.1.0'})
+                if route == '/api/health': return self.json({'ok': True, 'version': '1.2.0rc1'})
                 if route == '/api/settings':
                     return self.json(workspace.public() if workspace else {'ready': True, 'data_directory': None, 'message': ''})
                 parts = route.strip('/').split('/')
+                if len(parts) == 4 and parts[:2] == ['api', 'datasets'] and parts[3] == 'alignment':
+                    return self.json(dataset_alignment(catalog, parts[2], workspace.settings_file if workspace else None))
                 active_imports = workspace.imports if workspace else imports
                 active_cache = workspace.cache if workspace else cache
                 if len(parts) == 3 and parts[:2] == ['api', 'imports'] and active_imports:
@@ -224,6 +228,20 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                 if url.path in SETTINGS_ROUTES:
                     return self.settings_response(url.path, size)
                 if workspace and not workspace.ready: raise ValueError('请先完成首次数据目录设置')
+                parts = url.path.strip('/').split('/')
+                if len(parts) == 4 and parts[:2] == ['api', 'datasets'] and parts[3] == 'alignment':
+                    if parts[2] not in catalog.datasets: raise ValueError('数据集不存在')
+                    body = self.read_json_body(size)
+                    return self.json({'pose': save_alignment(workspace.settings_file if workspace else None, parts[2], body['pose'])})
+                if len(parts) == 4 and parts[:2] == ['api', 'objects'] and parts[3] in ('reslice-info', 'reslice', 'reslice-probe'):
+                    body = self.read_json_body(size); folder, meta = catalog.get(parts[2])
+                    if parts[3] == 'reslice-info': return self.json(reslice_geometry(meta, body['pose'])[0])
+                    if parts[3] == 'reslice-probe':
+                        return self.json(reslice_probe(folder, meta, body['pose'], body['xyz'], body.get('time', 0)))
+                    payload = reslice_packet(folder, meta, body['pose'], body['axis'], body['coordinate'], body.get('time', 0))
+                    self.send_headers(mime='application/octet-stream', length=len(payload))
+                    self.end_headers(); self.wfile.write(payload)
+                    return
                 if url.path == '/api/import-upload' and active_imports:
                     return self.upload_response(url.query, size, active_imports)
                 if url.path not in ('/api/datasets', '/api/imports'): return self.json({'error': '接口不存在'}, 404)

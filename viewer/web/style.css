@@ -8,3 +8,10 @@
 .path-row{display:flex;gap:8px;align-items:stretch}.path-row input{min-width:0;flex:1}.path-row button{white-space:nowrap;font-size:12px}.path-row input[readonly]{color:#b4c8d8;cursor:default}.file-picker{width:min(760px,94vw);max-height:94vh;overflow:auto}.picker-toolbar{display:flex;gap:7px;margin:20px 0 10px}.picker-toolbar button{white-space:nowrap;font-size:12px}.picker-toolbar input{min-width:0;flex:1;font-size:12px}.picker-hint{font-size:11px;margin:10px 0!important}.picker-list{height:min(310px,35vh);overflow:auto;border:1px solid #2a3d4c;border-radius:7px;background:#0d1721;padding:5px}.picker-item{display:flex;align-items:center;gap:10px;text-align:left;width:100%;border-color:transparent;background:transparent;padding:10px 8px}.picker-item>span:nth-child(2){flex:1;overflow-wrap:anywhere;font-size:12px}.picker-item small{font-size:10px;color:#7892a4;white-space:nowrap}.picker-icon{color:#77d8bd;font-size:18px;width:20px;text-align:center}.picker-pagination{display:flex;justify-content:space-between;align-items:center;margin:10px 0 14px;color:#7e99a9;font-size:11px;gap:10px}.picker-pagination button{font-size:10px;padding:5px 9px;margin-left:5px}.file-picker .dialog-footer{margin-top:16px}#setup-dialog{width:min(640px,94vw)}#setup-dialog .import-hint{line-height:1.9}
 
 #open-port-settings{font-size:11px;padding:7px 10px;white-space:nowrap}.port-attention{border-color:#d69a4a!important}#port-current{font-weight:500;overflow-wrap:anywhere}#port-dialog{width:min(600px,94vw)}#port-result{margin-top:14px}@media(max-width:700px){.brand small{display:none}.header-actions{gap:6px}#open-port-settings{font-size:10px;padding:7px}.manual-link{font-size:10px}}
+/* Dataset pose controls share the inspector's compact field layout. */
+.alignment-panel { border-bottom: 1px solid var(--border, #35424b); }
+.alignment-buttons { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0 12px; }
+.alignment-buttons input { width: 72px; min-width: 0; flex: 1; }
+.alignment-buttons button { padding: 6px 9px; font-size: 12px; }
+.alignment-angle .range-field { margin-bottom: 2px; }
+.alignment-status { min-height: 36px; overflow-wrap: anywhere; }

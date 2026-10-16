@@ -4,6 +4,8 @@
 
 使用说明：[PDF 说明书](viewer/web/manual.pdf) · [网页版说明书源文件](viewer/web/manual.html)。运行软件后也可点击右上角“使用说明”，离线阅读全部操作步骤。
 
+当前源码为 1.2.0rc1 候选版，新增整个数据集姿态对齐；公开稳定版仍为 1.1.0。候选版尚待浏览器交互与视觉验收。
+
 ## 功能
 
 - 导入 `.ORSSession`、`.ORSObject`、二进制/ASCII `.STL` 和三维/四维数值 `.NPY`。
@@ -12,6 +14,8 @@
 - 端口默认 0（自动分配），也可设置 1–65535；目录选择使用文件夹按钮，启动失败会在窗口内提示。
 - 自动提取支持的对象类型，保存原始记录、元数据、数值数组、网格和测量表。
 - 原始网格默认保留全部顶点和三角面，不自动简化。手动调整保留比例后才简化，设回 100% 恢复原始网格，并显示实际面数。
+- 整个数据集共用旋转中心与姿态：XYZ 角度、±90°、参考面或三点自动对齐、固定 XYZ 切面、单独保存与恢复。
+- 对齐 CT 切面使用线性插值，分割切面使用最近邻并保留完整标签 ID。原始数据、测量表和源坐标导出保持不变。
 - CT 三切面联动：三个原始二维切面 + 三维定位，十字线拖动、滚轮翻片、X/Y/Z 滑块、统一窗口与时间步、原始体素读数、四窗口截图。
 - 三角网格支持三切面：三个轴向截面与三维定位联动，支持十字线拖动、滚轮移动、精确坐标和四窗口截图。
 - 每个二维切面独立缩放 25–800%，提供右键平移、定位十字线和适应窗口。
@@ -39,9 +43,9 @@
 
 首次数据目录默认为 `ORSViewer.exe` 所在文件夹（源码运行时为项目目录）；已有配置会沿用上次选择。启动时检查目录可写性，失败后可重新选择。解析输出、缓存、日志、示例和运行信息分别存放在数据目录内的 `imported`、`cache`、`logs`、`example` 和 `runtime` 文件夹中。
 
-运行后可点击“停止服务并修改”重新设置端口和目录，再启动服务并手动打开页面。停止服务或关闭启动窗口会中断未完成任务，已有输出保留。更换目录不会移动或删除旧数据。Windows 的 `%LOCALAPPDATA%/ORSViewer/settings.json` 保存目录、端口和主题偏好。
+运行后可点击“停止服务并修改”重新设置端口和目录，再启动服务并手动打开页面。停止服务或关闭启动窗口会中断未完成任务，已有输出保留。更换目录不会移动或删除旧数据。Windows 的 `%LOCALAPPDATA%/ORSViewer/settings.json` 保存目录、端口、主题及按数据集路径区分的对齐偏好。
 
-1.1.0 为正式发布版。186 项自动测试通过；本次未完成浏览器视觉验收。
+1.1.0 为已发布正式版。1.2.0rc1 为本地候选测试版本；自动化验证覆盖共享变换、插值、标签、导出不变与视图切换，浏览器视觉验收尚未完成。
 
 ## 从源码运行
 
@@ -125,7 +129,7 @@ ORS Viewer 是独立开发的文件解析与可视化工具，用于读取用户
 
 ```sh
 python -m unittest discover -s tests -v
-node --test tests/test_section.mjs tests/test_mpr.mjs tests/test_mesh_mpr.mjs tests/test_contour_fill.mjs
+node --test tests/test_section.mjs tests/test_mpr.mjs tests/test_mesh_mpr.mjs tests/test_contour_fill.mjs tests/test_ui_controls.mjs tests/test_alignment.mjs
 python -m pip install -r requirements-build.txt
 python scripts/build_windows.py
 ```
