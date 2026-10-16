@@ -24,6 +24,17 @@ from .imports import ImportJobs, EXTENSIONS
 from .file_browser import list_directory, create_directory
 from .settings import validate_directory, save_directory, load_port, save_port, validate_port, load_theme, save_theme
 
+JSON_BODY_LIMIT = 8192
+MAX_UPLOAD_BYTES = 64 * 1024**3
+STREAM_CHUNK_BYTES = 1024 * 1024
+UPLOAD_TIMEOUT_SECONDS = 120
+DEFAULT_TABLE_PAGE_SIZE = 50
+MAX_TABLE_PAGE_SIZE = 100
+SETTINGS_ROUTES = frozenset({
+    '/api/filesystem/list', '/api/filesystem/mkdir', '/api/settings/data-directory',
+    '/api/settings/port', '/api/settings/theme',
+})
+
 HERE = Path(__file__).resolve().parent
 WEB = HERE / 'web'
 KINDS = {'CxvFaceVertexMesh': 'mesh', 'CxvChannel': 'volume',
@@ -93,12 +104,12 @@ class Catalog:
         with self.lock: return list(self.datasets.values())
 
 
-def table_data(folder, meta, group, start=0, limit=50):
+def table_data(folder, meta, group, start=0, limit=DEFAULT_TABLE_PAGE_SIZE):
     table = next((t for t in meta.get('tables', []) if t['group'] == group), None)
     if table is None: raise ValueError('测量表不存在')
     total = int(table['row_count'])
     start = max(0, min(start, max(0, total - 1)))
-    stop = min(total, start + max(1, min(limit, 100)))
+    stop = min(total, start + max(1, min(limit, MAX_TABLE_PAGE_SIZE)))
     columns, values = [], []
     for column in table['columns']:
         path = safe_file(folder, column['file'])
@@ -147,13 +158,13 @@ def handler(catalog, cache, token, imports=None, workspace=None):
             if download: self.send_header('Content-Disposition', 'attachment; filename="%s"' % path.name)
             self.end_headers()
             with path.open('rb') as stream:
-                for block in iter(lambda: stream.read(1024 * 1024), b''): self.wfile.write(block)
+                for block in iter(lambda: stream.read(STREAM_CHUNK_BYTES), b''): self.wfile.write(block)
 
         def do_GET(self):
             try:
                 url = urlsplit(self.path);route = unquote(url.path);q = parse_qs(url.query)
                 if route == '/api/catalog': return self.json({'datasets': catalog.public()})
-                if route == '/api/health': return self.json({'ok': True, 'version': '0.9.1RC2'})
+                if route == '/api/health': return self.json({'ok': True, 'version': '1.0.0'})
                 if route == '/api/settings':
                     return self.json(workspace.public() if workspace else {'ready': True, 'data_directory': None, 'message': ''})
                 parts = route.strip('/').split('/')
@@ -162,31 +173,7 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                 if len(parts) == 3 and parts[:2] == ['api', 'imports'] and active_imports:
                     return self.json(active_imports.get(parts[2]))
                 if len(parts) >= 3 and parts[:2] == ['api', 'objects']:
-                    folder, meta = catalog.get(parts[2])
-                    action = parts[3] if len(parts) == 4 else 'metadata'
-                    if action == 'metadata': return self.json(meta)
-                    if action == 'slice':
-                        payload = slice_packet(folder, meta, int(q.get('axis', ['2'])[0]),
-                                               int(q.get('index', ['0'])[0]), int(q.get('time', ['0'])[0]))
-                        self.send_headers(mime='application/octet-stream', length=len(payload))
-                        self.end_headers();self.wfile.write(payload)
-                        return
-                    if action == 'voxel':
-                        return self.json(voxel_value(folder, meta, [int(q.get(k, ['0'])[0]) for k in ('x', 'y', 'z')],
-                                                     int(q.get('time', ['0'])[0])))
-                    if action == 'preview':
-                        if active_cache is None: raise ValueError('请先设置数据目录')
-                        path = active_cache.get(folder, meta, q.get('quality', ['balanced'])[0],
-                                         int(q.get('time', ['0'])[0]), int(q.get('label', ['0'])[0]), float(q.get('retention', ['100'])[0]))
-                        return self.file(path)
-                    if action == 'table':
-                        return self.json(table_data(folder, meta, q.get('group', [''])[0],
-                                                    int(q.get('start', ['0'])[0]), int(q.get('limit', ['50'])[0])))
-                    if action == 'download':
-                        name = q.get('file', [''])[0]
-                        if name not in download_files(meta): raise ValueError('文件不在该对象的导出清单内')
-                        return self.file(safe_file(folder, name), True)
-                    raise KeyError('接口不存在')
+                    return self.object_response(parts, q, active_cache)
                 if route in ('/', '/index.html'):
                     data = (WEB / 'index.html').read_text('utf-8').replace('__VIEWER_TOKEN__', token).encode('utf-8')
                     self.send_headers(mime='text/html; charset=utf-8', length=len(data));self.end_headers();self.wfile.write(data)
@@ -198,6 +185,34 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                 self.log_error('%s', exc)
                 self.json({'error': str(exc)}, 400)
 
+        def object_response(self, parts, q, active_cache):
+            folder, meta = catalog.get(parts[2])
+            # Preserve legacy path fallback and query defaults, including extra segments.
+            action = parts[3] if len(parts) == 4 else 'metadata'
+            if action == 'metadata': return self.json(meta)
+            if action == 'slice':
+                payload = slice_packet(folder, meta, int(q.get('axis', ['2'])[0]),
+                                       int(q.get('index', ['0'])[0]), int(q.get('time', ['0'])[0]))
+                self.send_headers(mime='application/octet-stream', length=len(payload))
+                self.end_headers();self.wfile.write(payload)
+                return
+            if action == 'voxel':
+                return self.json(voxel_value(folder, meta, [int(q.get(k, ['0'])[0]) for k in ('x', 'y', 'z')],
+                                             int(q.get('time', ['0'])[0])))
+            if action == 'preview':
+                if active_cache is None: raise ValueError('请先设置数据目录')
+                path = active_cache.get(folder, meta, q.get('quality', ['balanced'])[0],
+                                 int(q.get('time', ['0'])[0]), int(q.get('label', ['0'])[0]), float(q.get('retention', ['100'])[0]))
+                return self.file(path)
+            if action == 'table':
+                return self.json(table_data(folder, meta, q.get('group', [''])[0],
+                                            int(q.get('start', ['0'])[0]), int(q.get('limit', [str(DEFAULT_TABLE_PAGE_SIZE)])[0])))
+            if action == 'download':
+                name = q.get('file', [''])[0]
+                if name not in download_files(meta): raise ValueError('文件不在该对象的导出清单内')
+                return self.file(safe_file(folder, name), True)
+            raise KeyError('接口不存在')
+
         def do_POST(self):
             try:
                 expected = 'http://127.0.0.1:%d' % self.server.server_port
@@ -206,48 +221,57 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                 url = urlsplit(self.path)
                 size = int(self.headers.get('Content-Length', 0))
                 active_imports = workspace.imports if workspace else imports
-                if url.path in ('/api/filesystem/list', '/api/filesystem/mkdir', '/api/settings/data-directory', '/api/settings/port', '/api/settings/theme'):
-                    if not 0 < size <= 8192: raise ValueError('请求大小无效')
-                    body = json.loads(self.rfile.read(size))
-                    if url.path == '/api/filesystem/list':
-                        return self.json(list_directory(body.get('path', ''), body.get('kind', 'file'), body.get('offset', 0), body.get('query', '')))
-                    if url.path == '/api/filesystem/mkdir':
-                        return self.json({'path': create_directory(body['path'], body['name'])})
-                    if workspace is None: raise ValueError('数据目录设置不可用')
-                    if url.path == '/api/settings/theme':
-                        save_theme(workspace.settings_file, body['theme'])
-                        return self.json(workspace.public())
-                    if url.path == '/api/settings/port':
-                        workspace.choose_port(body['port'])
-                        return self.json(workspace.public())
-                    workspace.choose(body['path'])
-                    return self.json(workspace.public())
+                if url.path in SETTINGS_ROUTES:
+                    return self.settings_response(url.path, size)
                 if workspace and not workspace.ready: raise ValueError('请先完成首次数据目录设置')
                 if url.path == '/api/import-upload' and active_imports:
-                    filename = Path(parse_qs(url.query).get('name', [''])[0]).name
-                    if Path(filename).suffix.lower() not in EXTENSIONS: raise ValueError('不支持该文件类型')
-                    if not 0 < size <= 64 * 1024**3: raise ValueError('文件大小须在 1 字节至 64 GiB 之间；更大文件请通过路径导入')
-                    uploads = active_imports.directory / 'uploads';uploads.mkdir(exist_ok=True)
-                    target = uploads / (uuid.uuid4().hex + Path(filename).suffix.lower())
-                    try:
-                        self.connection.settimeout(120)
-                        with target.open('xb') as stream:
-                            remaining = size
-                            while remaining:
-                                block = self.rfile.read(min(1024 * 1024, remaining))
-                                if not block: raise ValueError('上传中断，请重试')
-                                stream.write(block);remaining -= len(block)
-                        return self.json(active_imports.create(target, Path(filename).stem), 202)
-                    except Exception:
-                        target.unlink(missing_ok=True);raise
+                    return self.upload_response(url.query, size, active_imports)
                 if url.path not in ('/api/datasets', '/api/imports'): return self.json({'error': '接口不存在'}, 404)
-                if not 0 < size <= 8192: raise ValueError('请求大小无效')
-                body = json.loads(self.rfile.read(size))
+                body = self.read_json_body(size)
                 if url.path == '/api/imports':
                     if not active_imports: raise ValueError('文件导入未启用')
                     return self.json(active_imports.create(body['path']), 202)
                 return self.json(catalog.add(body['path']))
             except Exception as exc: self.json({'error': str(exc)}, 400)
+
+        def read_json_body(self, size):
+            if not 0 < size <= JSON_BODY_LIMIT:
+                raise ValueError('请求大小无效')
+            return json.loads(self.rfile.read(size))
+
+        def settings_response(self, route, size):
+            body = self.read_json_body(size)
+            if route == '/api/filesystem/list':
+                return self.json(list_directory(body.get('path', ''), body.get('kind', 'file'), body.get('offset', 0), body.get('query', '')))
+            if route == '/api/filesystem/mkdir':
+                return self.json({'path': create_directory(body['path'], body['name'])})
+            if workspace is None: raise ValueError('数据目录设置不可用')
+            if route == '/api/settings/theme':
+                save_theme(workspace.settings_file, body['theme'])
+                return self.json(workspace.public())
+            if route == '/api/settings/port':
+                workspace.choose_port(body['port'])
+                return self.json(workspace.public())
+            workspace.choose(body['path'])
+            return self.json(workspace.public())
+
+        def upload_response(self, query, size, active_imports):
+            filename = Path(parse_qs(query).get('name', [''])[0]).name
+            if Path(filename).suffix.lower() not in EXTENSIONS: raise ValueError('不支持该文件类型')
+            if not 0 < size <= MAX_UPLOAD_BYTES: raise ValueError('文件大小须在 1 字节至 64 GiB 之间；更大文件请通过路径导入')
+            uploads = active_imports.directory / 'uploads';uploads.mkdir(exist_ok=True)
+            target = uploads / (uuid.uuid4().hex + Path(filename).suffix.lower())
+            try:
+                self.connection.settimeout(UPLOAD_TIMEOUT_SECONDS)
+                with target.open('xb') as stream:
+                    remaining = size
+                    while remaining:
+                        block = self.rfile.read(min(STREAM_CHUNK_BYTES, remaining))
+                        if not block: raise ValueError('上传中断，请重试')
+                        stream.write(block);remaining -= len(block)
+                return self.json(active_imports.create(target, Path(filename).stem), 202)
+            except Exception:
+                target.unlink(missing_ok=True);raise
 
         def log_message(self, fmt, *args):
             if '/api/objects/' in self.path and '/preview' not in self.path: return

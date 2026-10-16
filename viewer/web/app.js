@@ -5,6 +5,10 @@ import { MPRView } from './mpr.js';
 import { ServerSettings } from './server-settings.js';
 import {themeFor,THEMES} from './themes.js';
 import {LatestRequest} from './mpr-math.js';
+import {createViewControls} from './view-controls.js';
+import {requestJson as api, requestPreview} from './data-client.js';
+import {createPreviewPLY} from './export-ply.js';
+import {AXIS_KEYS, PERCENT_SCALE, TABLE_PAGE_SIZE, TOAST_DURATION_MS, IMPORT_POLL_INTERVAL_MS, DOWNLOAD_URL_LIFETIME_MS} from './ui-constants.js';
 
 const $=id=>document.getElementById(id);
 const state={datasets:[],dataset:null,object:null,meta:null,preview:null,filter:'all',request:0,tableStart:0,selectedLabel:0};
@@ -15,14 +19,15 @@ const compact=n=>n>=1e6?(n/1e6).toFixed(2)+' M':n>=1e3?(n/1e3).toFixed(1)+' K':f
 function number(v){if(v==null)return '—';if(typeof v!=='number')return String(v);if(!Number.isFinite(v))return '—';if(v===0)return '0';if(Math.abs(v)<.001||Math.abs(v)>=1e6)return v.toExponential(3);return Number(v.toPrecision(6)).toLocaleString('en-US',{maximumSignificantDigits:6});}
 function el(tag,text,cls){const node=document.createElement(tag);if(text!=null)node.textContent=text;if(cls)node.className=cls;return node;}
 function showError(message){$('scene-error').textContent=message;$('scene-error').hidden=false;}
-function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(state.toastTimer);state.toastTimer=setTimeout(()=>$('toast').hidden=true,4500);}
+function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(state.toastTimer);state.toastTimer=setTimeout(()=>$('toast').hidden=true,TOAST_DURATION_MS);}
 let scene,section,rendererError;
 try{scene=new SceneView($('viewport'),showError);section=new SectionController(scene,(status,count)=>{
   if(state.object?.kind==='volume')return;
   $('section-note').textContent=status==='exact'?`精确截线 ${fmt(count)} 段；剖切实时更新，不自动封口。`:status==='live'?'实时剖切与截线显示；后台精确截线暂不可用。':'剖切与截线实时显示；正在后台更新精确截线。';
 });}catch(error){rendererError='当前浏览器无法启用 WebGL 2 三维显示：'+error.message;showError(rendererError);}
 const mpr=new MPRView($('view-layout'),scene,setSlicePosition,extendWindowRange);
-async function api(path,options){const response=await fetch(path,options);if(!response.ok){let value;try{value=await response.json();}catch{}throw new Error(value?.error||`请求失败 (${response.status})`);}return response.json();}
+const viewControls=createViewControls({state,scene,mpr,element:$,updateSection});
+const {updateVolumeMode,updateMeshMode}=viewControls;
 function objectUrl(action){return `/api/objects/${state.object.id}/${action}`;}
 
 async function loadCatalog(selectId){
@@ -37,7 +42,6 @@ async function loadCatalog(selectId){
 function switchDataset(){
   state.dataset=state.datasets.find(d=>d.id===$('dataset-select').value);state.filter='all';$('search').value='';$('show-hidden').checked=false;
   document.querySelectorAll('#type-filters button').forEach(b=>b.classList.toggle('active',b.dataset.kind==='all'));
-  const counts={mesh:0,volume:0,labels:0};state.dataset.objects.forEach(o=>counts[o.kind]++);
   $('dataset-caption').textContent=`${state.dataset.objects.length} 个对象 · ${state.dataset.raw_complete?'原始记录已完整提取':'原始记录提取未完成'}`;
   $('app-status').textContent=`已连接 · ${state.dataset.name}`;
   renderList();
@@ -59,6 +63,11 @@ function renderList(){
 }
 async function selectObject(id){
   const object=state.dataset.objects.find(o=>o.id===id);if(!object)return;
+  resetObjectView(object);
+  try{const meta=await api(objectUrl('metadata'));if(state.object.id!==id)return;state.meta=meta;renderMetadata();await loadPreview();}
+  catch(error){if(state.object.id===id){showError(error.message);$('loading').hidden=true;}}
+}
+function resetObjectView(object){
   ++state.request;state.abort?.abort();
   mpr.clear();state.meshMPR=false;$('mesh-mpr-controls').hidden=true;$('section-controls').hidden=false;$('mpr-toggle').hidden=object.kind==='labels';$('volume-mode').value='mpr';
   state.object=object;state.selectedLabel=0;state.tableStart=0;state.meta=null;state.preview=null;
@@ -74,8 +83,6 @@ async function selectObject(id){
   $('scalar-legend').hidden=true;
   $('scalar-select').value='solid';
   $('volume-controls').hidden=object.kind!=='volume';$('label-controls').hidden=object.kind!=='labels';$('wireframe-field').hidden=object.kind==='volume';
-  try{const meta=await api(objectUrl('metadata'));if(state.object.id!==id)return;state.meta=meta;renderMetadata();await loadPreview();}
-  catch(error){if(state.object.id===id){showError(error.message);$('loading').hidden=true;}}
 }
 function renderMetadata(){
   const o=state.object,m=state.meta;const stats=[];
@@ -102,52 +109,96 @@ function renderMetadata(){
 async function loadPreview(){
   if(!state.object)return;
   if(!scene){showError(rendererError||'WebGL 2 三维显示不可用');$('render-status').textContent='三维渲染不可用';return;}
-  const request=++state.request,oid=state.object.id;
-  const previousScalar=$('scalar-select').value;
+  const request=beginPreviewRequest();
+  try{
+    const query=`?quality=${$('quality').value}&time=${$('time-step').value||0}&label=${state.selectedLabel||0}&retention=${$('retention').value}`;
+    const packet=await requestPreview(objectUrl('preview')+query,state.abort.signal,parsePacket);
+    if(!isCurrentPreview(request))return;
+    applyPreviewPacket(packet,request.previousScalar);
+    $('app-status').textContent=`就绪 · ${state.dataset.name}`;
+    $('viewport').dataset.ready='true';$('viewport').dataset.kind=packet.meta.kind;
+  }catch(error){
+    if(error.name!=='AbortError'&&request.revision===state.request){showError(error.message);$('render-status').textContent='预览未完成';$('app-status').textContent='载入失败，请检查提示';}
+  }finally{
+    if(request.revision===state.request)$('loading').hidden=true;
+  }
+}
+function beginPreviewRequest(){
+  const request={revision:++state.request,objectId:state.object.id,previousScalar:$('scalar-select').value};
   state.abort?.abort();state.abort=new AbortController();
-  $('loading').hidden=false;$('loading-description').textContent=state.object.kind==='mesh'?(Number($('retention').value)===100?'正在载入全部原始网格，大模型需要更多时间和内存':'正在按指定比例简化网格'):'正在生成三维显示数据';
+  $('loading').hidden=false;
+  $('loading-description').textContent=state.object.kind==='mesh'?(Number($('retention').value)===100?'正在载入全部原始网格，大模型需要更多时间和内存':'正在按指定比例简化网格'):'正在生成三维显示数据';
   $('scene-error').hidden=true;$('render-status').textContent='正在载入…';$('app-status').textContent='准备预览 · '+state.object.title;
   $('viewport').dataset.ready='false';
-  try{
-    const url=objectUrl('preview')+`?quality=${$('quality').value}&time=${$('time-step').value||0}&label=${state.selectedLabel||0}&retention=${$('retention').value}`;
-    const response=await fetch(url,{signal:state.abort.signal});if(!response.ok){const v=await response.json();throw new Error(v.error);}
-    const packet=parsePacket(await response.arrayBuffer());if(request!==state.request||oid!==state.object.id)return;
-    state.preview=packet;scene.load(packet);scene.opacity(Number($('opacity').value)/100);scene.wireframe($('wireframe').checked);scene.showGrid($('show-grid').checked);scene.showBox($('show-box').checked);
-    const m=packet.meta;$('preview-note').textContent=m.approximation;
-    if(m.kind==='volume'){
-      setupVolume(m);$('render-status').textContent=`3D 预览 ${m.sample_shape_zyx.slice().reverse().join(' × ')} · 二维切片为原始分辨率`;
-      $('preview-note').textContent='CT 二维切片读取原始分辨率，按实际体素间距显示；窗口映射使用 float32，定位读数来自原始数值。三维快速纹理为采样预览，原始切片到达后同步替换定位平面。';
-    }else{$('render-status').textContent=`${m.focus_label?'标签 '+m.focus_label+' · ':''}${m.simplified===false?'原始网格':'当前显示'} ${fmt(m.preview_triangles||0)} 三角形`;if(m.kind==='mesh')setupMeshMPR(packet);}
-    const base=m.base_triangles||m.preview_triangles||0,ratio=m.actual_retention??100;
-    $('retention-info').textContent=`${m.kind==='mesh'?'原始网格':'当前采样表面'} ${fmt(base)} → ${fmt(m.preview_triangles||0)} 面 · 实际保留 ${ratio.toFixed(2)}%`;
-    $('download-preview').hidden=m.kind==='volume';
-    updateSection();if(state.faceSection)section.face();
-    $('object-kind').textContent=`${kinds[state.object.kind]} / OBJECT ${state.object.index}${m.focus_label?' / LABEL '+m.focus_label:''}`;
-    $('scalar-field').hidden=!(m.scalars?.length);
-    $('scalar-select').replaceChildren(el('option','单色材质'));
-    $('scalar-select').firstChild.value='solid';
-    for(const scalar of m.scalars||[]){const option=el('option',scalar.name+(scalar.unit?` (${scalar.unit})`:''));option.value=scalar.key;$('scalar-select').append(option);}
-    $('scalar-legend').hidden=true;
-    if(m.scalars?.some(s=>s.key===previousScalar)){$('scalar-select').value=previousScalar;selectScalar();}
-    if(m.kind==='labels'){
-      const missing=m.missing_labels||[];$('label-warning').hidden=!missing.length;
-      $('label-warning').textContent=`${missing.length} 个细小标签在概览中不可见。点击标签可局部放大查看；统计仍为完整数据。`;
-      if(!m.preview_triangles)showError('当前采样下没有可见表面，请尝试“精细”预览。');
-      selectLabel(state.selectedLabel);
-    }
-    $('app-status').textContent=`就绪 · ${state.dataset.name}`;
-    $('viewport').dataset.ready='true';$('viewport').dataset.kind=m.kind;
-  }catch(error){if(error.name!=='AbortError'&&request===state.request){showError(error.message);$('render-status').textContent='预览未完成';$('app-status').textContent='载入失败，请检查提示';}}
-  finally{if(request===state.request)$('loading').hidden=true;}
+  return request;
+}
+function isCurrentPreview(request){
+  return request.revision===state.request&&request.objectId===state.object.id;
+}
+function applyPreviewPacket(packet, previousScalar) {
+  state.preview = packet;
+  scene.load(packet);
+  scene.opacity(Number($('opacity').value) / PERCENT_SCALE);
+  scene.wireframe($('wireframe').checked);
+  scene.showGrid($('show-grid').checked);
+  scene.showBox($('show-box').checked);
+  const meta = packet.meta;
+  $('preview-note').textContent = meta.approximation;
+  configurePreviewKind(packet);
+  updateRetentionSummary(meta);
+  updateSection();
+  if (state.faceSection) section.face();
+  $('object-kind').textContent = `${kinds[state.object.kind]} / OBJECT ${state.object.index}${meta.focus_label?' / LABEL '+meta.focus_label:''}`;
+  updateScalarOptions(meta, previousScalar);
+  if (meta.kind === 'labels') updateLabelPreview(meta);
+}
+function configurePreviewKind(packet) {
+  const meta = packet.meta;
+  if (meta.kind === 'volume') {
+    setupVolume(meta);
+    $('render-status').textContent = `3D 预览 ${meta.sample_shape_zyx.slice().reverse().join(' × ')} · 二维切片为原始分辨率`;
+    $('preview-note').textContent = 'CT 二维切片读取原始分辨率，按实际体素间距显示；窗口映射使用 float32，定位读数来自原始数值。三维快速纹理为采样预览，原始切片到达后同步替换定位平面。';
+    return;
+  }
+  $('render-status').textContent = `${meta.focus_label?'标签 '+meta.focus_label+' · ':''}${meta.simplified===false?'原始网格':'当前显示'} ${fmt(meta.preview_triangles||0)} 三角形`;
+  if (meta.kind === 'mesh') setupMeshMPR(packet);
+}
+function updateLabelPreview(meta) {
+  const missing = meta.missing_labels || [];
+  $('label-warning').hidden = !missing.length;
+  $('label-warning').textContent = `${missing.length} 个细小标签在概览中不可见。点击标签可局部放大查看；统计仍为完整数据。`;
+  if (!meta.preview_triangles) showError('当前采样下没有可见表面，请尝试“精细”预览。');
+  selectLabel(state.selectedLabel);
+}
+function updateRetentionSummary(meta) {
+  const base = meta.base_triangles || meta.preview_triangles || 0;
+  const ratio = meta.actual_retention ?? PERCENT_SCALE;
+  $('retention-info').textContent = `${meta.kind==='mesh'?'原始网格':'当前采样表面'} ${fmt(base)} → ${fmt(meta.preview_triangles||0)} 面 · 实际保留 ${ratio.toFixed(2)}%`;
+  $('download-preview').hidden = meta.kind === 'volume';
+}
+function updateScalarOptions(meta, previousScalar) {
+  $('scalar-field').hidden = !(meta.scalars?.length);
+  $('scalar-select').replaceChildren(el('option', '单色材质'));
+  $('scalar-select').firstChild.value = 'solid';
+  for (const scalar of meta.scalars || []) {
+    const option = el('option', scalar.name + (scalar.unit ? ` (${scalar.unit})` : ''));
+    option.value = scalar.key;
+    $('scalar-select').append(option);
+  }
+  $('scalar-legend').hidden = true;
+  if (meta.scalars?.some(scalar => scalar.key === previousScalar)) {
+    $('scalar-select').value = previousScalar;
+    selectScalar();
+  }
 }
 function setupVolume(meta){
   const previous=mpr.id===state.object.id?mpr.indices:null;
   const [min,max]=meta.range;
   ['window-low','window-high'].forEach((key,i)=>{const input=$(key);input.min=min;input.max=max>min?max:min+1;input.step='any';input.value=meta.window[i];});
   const indices=[];
-  ['x','y','z'].forEach((axis,i)=>{const n=meta.original_shape_tzyx[3-i],input=$('slice-'+axis);input.min=0;input.max=n-1;input.step=1;input.value=previous?.[i]??Math.floor((n-1)/2);indices.push(Number(input.value));});
+  AXIS_KEYS.forEach((axis,i)=>{const n=meta.original_shape_tzyx[3-i],input=$('slice-'+axis);input.min=0;input.max=n-1;input.step=1;input.value=previous?.[i]??Math.floor((n-1)/2);indices.push(Number(input.value));});
   mpr.source(state.object.id,state.meta,meta.time_step,indices);setSlicePosition(indices);
-  updateWindow();updateVolumeMode();scene.iso(Number($('iso').value)/100);
+  updateWindow();updateVolumeMode();scene.iso(Number($('iso').value)/PERCENT_SCALE);
 }
 function extendWindowRange(range){for(const key of ['window-low','window-high']){const input=$(key);input.min=Math.min(Number(input.min),range[0]);input.max=Math.max(Number(input.max),range[1]);}}
 function updateWindow(event){
@@ -157,36 +208,23 @@ function updateWindow(event){
   $('window-low').value=low;$('window-high').value=high;
   $('window-low-value').textContent=number(low);$('window-high-value').textContent=number(high);scene?.setWindow(low,high);mpr.window(low,high);
 }
-function updateVolumeMode(){
-  const mode=$('volume-mode').value,isMPR=mode==='mpr'&&state.object?.kind==='volume';
-  $('slice-fields').hidden=!isMPR&&mode!=='slices';$('iso-field').hidden=mode!=='iso';$('mpr-help').hidden=!isMPR;
-  $('section-controls').hidden=isMPR;$('mpr-toggle').setAttribute('aria-pressed',String(isMPR));
-  if(isMPR){$('section-enabled').checked=false;state.faceSection=false;if(scene?.camera.isOrthographicCamera)scene.perspective();}
-  mpr.setActive(isMPR);scene?.volumeMode(isMPR?'slices':mode);scene?.showGrid(!isMPR&&$('show-grid').checked);
-  if(state.preview?.meta.kind==='volume')updateSection();
-}
 function setSlicePosition(indices){
   if(state.object?.kind==='mesh'){updateMeshPosition(indices);return;}
-  ['x','y','z'].forEach((axis,i)=>{const input=$('slice-'+axis);input.value=indices[i];const value=Number(input.value);$('slice-'+axis+'-value').textContent=value;scene?.slice(i,value);});
-  mpr.position(['x','y','z'].map(axis=>Number($('slice-'+axis).value)));
+  AXIS_KEYS.forEach((axis,i)=>{const input=$('slice-'+axis);input.value=indices[i];const value=Number(input.value);$('slice-'+axis+'-value').textContent=value;scene?.slice(i,value);});
+  mpr.position(AXIS_KEYS.map(axis=>Number($('slice-'+axis).value)));
 }
-function updateSlice(){setSlicePosition(['x','y','z'].map(axis=>Number($('slice-'+axis).value)));}
+function updateSlice(){setSlicePosition(AXIS_KEYS.map(axis=>Number($('slice-'+axis).value)));}
 function setupMeshMPR(packet){
   const bounds=[scene.bounds.min.toArray(),scene.bounds.max.toArray()],previous=mpr.id===state.object.id&&mpr.kind==='mesh'?mpr.indices:null;
   const coordinates=bounds[0].map((x,i)=>Math.max(x,Math.min(bounds[1][i],previous?.[i]??(x+bounds[1][i])/2)));
   mpr.meshSource(state.object.id,packet,coordinates);
-  ['x','y','z'].forEach((axis,i)=>{for(const suffix of ['', '-number']){const input=$('mesh-'+axis+suffix);input.min=bounds[0][i];input.max=bounds[1][i];input.step='any';input.disabled=bounds[0][i]===bounds[1][i];}});
+  AXIS_KEYS.forEach((axis,i)=>{for(const suffix of ['', '-number']){const input=$('mesh-'+axis+suffix);input.min=bounds[0][i];input.max=bounds[1][i];input.step='any';input.disabled=bounds[0][i]===bounds[1][i];}});
   updateMeshPosition(coordinates);updateMeshMode();
 }
 function updateMeshPosition(coordinates){
   coordinates=coordinates.map((x,i)=>mpr.clamp(i,x));
-  ['x','y','z'].forEach((axis,i)=>{for(const suffix of ['', '-number']){const input=$('mesh-'+axis+suffix);if(input!==document.activeElement||suffix==='')input.value=coordinates[i];}$('mesh-'+axis+'-value').textContent=number(coordinates[i]);});
+  AXIS_KEYS.forEach((axis,i)=>{for(const suffix of ['', '-number']){const input=$('mesh-'+axis+suffix);if(input!==document.activeElement||suffix==='')input.value=coordinates[i];}$('mesh-'+axis+'-value').textContent=number(coordinates[i]);});
   mpr.position(coordinates);
-}
-function updateMeshMode(){
-  const active=Boolean(state.meshMPR);$('mesh-mpr-controls').hidden=!active;$('section-controls').hidden=active;$('mpr-toggle').setAttribute('aria-pressed',String(active));
-  if(active){$('section-enabled').checked=false;state.faceSection=false;if(scene?.camera.isOrthographicCamera)scene.perspective();}
-  mpr.setActive(active);scene?.showGrid($('show-grid').checked);if(state.preview)updateSection();
 }
 function renderLabels(){
   const counts=state.meta.label_voxel_counts||{};$('label-list').replaceChildren();
@@ -210,17 +248,47 @@ async function showTable(reset=false){
   $('table-panel').hidden=false;$('stage').classList.add('has-table');
   const id=state.object.id,group=$('table-select').value;
   try{
-    const table=await api(objectUrl('table')+`?group=${encodeURIComponent(group)}&start=${state.tableStart}&limit=50`);
+    const table=await api(objectUrl('table')+`?group=${encodeURIComponent(group)}&start=${state.tableStart}&limit=${TABLE_PAGE_SIZE}`);
     if(state.object.id!==id||$('table-select').value!==group)return;
-    state.tableTotal=table.total;state.tableStart=table.start;
-    $('table-summary').textContent=fmt(table.total)+' 行 · 原始数据';$('measurement-table').replaceChildren();
-    const head=el('thead'),tr=el('tr');tr.append(el('th',table.row_kind==='label_index'?'标签 ID':table.row_kind==='vertex_index'?'顶点 ID':'索引'));
-    table.columns.forEach(c=>{const th=el('th',c.name);if(c.unit)th.append(el('small',c.unit));tr.append(th);});head.append(tr);$('measurement-table').append(head);
-    const body=el('tbody');table.rows.forEach(row=>{const tr=el('tr');row.forEach(v=>{const td=el('td',number(v));td.title=v==null?'':String(v);tr.append(td);});if(table.row_kind==='label_index')tr.onclick=()=>selectLabel(row[0]);body.append(tr);});$('measurement-table').append(body);
-    $('table-page-info').textContent=`${table.start+1}–${Math.min(table.start+table.rows.length,table.total)} / ${fmt(table.total)}`;
-    $('table-prev').disabled=table.start===0;$('table-next').disabled=table.start+table.rows.length>=table.total;
-    $('download-csv').hidden=!table.csv_file;if(table.csv_file)$('download-csv').href=objectUrl('download')+'?file='+encodeURIComponent(table.csv_file);
+    renderTable(table);
   }catch(error){toast(error.message);}
+}
+function renderTable(table) {
+  state.tableTotal = table.total;
+  state.tableStart = table.start;
+  $('table-summary').textContent = fmt(table.total) + ' 行 · 原始数据';
+  $('measurement-table').replaceChildren();
+  $('measurement-table').append(createTableHeader(table));
+  const body = el('tbody');
+  for (const row of table.rows) body.append(createTableRow(row, table.row_kind));
+  $('measurement-table').append(body);
+  const end = table.start + table.rows.length;
+  $('table-page-info').textContent = `${table.start+1}–${Math.min(end,table.total)} / ${fmt(table.total)}`;
+  $('table-prev').disabled = table.start === 0;
+  $('table-next').disabled = end >= table.total;
+  $('download-csv').hidden = !table.csv_file;
+  if (table.csv_file) $('download-csv').href = objectUrl('download') + '?file=' + encodeURIComponent(table.csv_file);
+}
+function createTableHeader(table) {
+  const head = el('thead'), row = el('tr');
+  row.append(el('th', table.row_kind === 'label_index' ? '标签 ID' : table.row_kind === 'vertex_index' ? '顶点 ID' : '索引'));
+  for (const column of table.columns) {
+    const cell = el('th', column.name);
+    if (column.unit) cell.append(el('small', column.unit));
+    row.append(cell);
+  }
+  head.append(row);
+  return head;
+}
+function createTableRow(values, rowKind) {
+  const row = el('tr');
+  for (const value of values) {
+    const cell = el('td', number(value));
+    cell.title = value == null ? '' : String(value);
+    row.append(cell);
+  }
+  if (rowKind === 'label_index') row.onclick = () => selectLabel(values[0]);
+  return row;
 }
 function openDialog(){$('add-error').hidden=true;$('add-dialog').showModal();$('browse-path').focus();}
 
@@ -238,11 +306,9 @@ function updateSection(distance,commitNumber=false){
 function exportPreview(){
   if(!state.preview?.arrays.indices)return;
   const {positions,indices}=state.preview.arrays;
-  const header=new TextEncoder().encode(`ply\nformat binary_little_endian 1.0\ncomment ORS Viewer display mesh; clipping not applied\nelement vertex ${positions.length/3}\nproperty float x\nproperty float y\nproperty float z\nelement face ${indices.length/3}\nproperty list uchar uint vertex_indices\nend_header\n`);
-  const faces=new Uint8Array(indices.length/3*13),view=new DataView(faces.buffer);
-  for(let i=0;i<indices.length/3;i++){view.setUint8(i*13,3);for(let j=0;j<3;j++)view.setUint32(i*13+1+j*4,indices[i*3+j],true);}
-  const blob=new Blob([header,positions,faces],{type:'application/octet-stream'}),url=URL.createObjectURL(blob),a=document.createElement('a');
-  a.href=url;a.download='ORS_display_'+$('retention').value+'pct.ply';a.click();setTimeout(()=>URL.revokeObjectURL(url),60000);
+  const blob=createPreviewPLY(positions,indices);
+  const url=URL.createObjectURL(blob),a=document.createElement('a');
+  a.href=url;a.download='ORS_display_'+$('retention').value+'pct.ply';a.click();setTimeout(()=>URL.revokeObjectURL(url),DOWNLOAD_URL_LIFETIME_MS);
   toast('已导出当前显示网格（剖切仅影响显示，未写入导出）');
 }
 const token=()=>document.querySelector('meta[name=viewer-token]').content;
@@ -277,7 +343,7 @@ $('setup-form').onsubmit=async event=>{
 };
 function uploadFile(file){return new Promise((resolve,reject)=>{
   const request=new XMLHttpRequest();request.open('POST','/api/import-upload?name='+encodeURIComponent(file.name));request.setRequestHeader('X-Viewer-Token',token());request.setRequestHeader('Content-Type','application/octet-stream');
-  request.upload.onprogress=e=>{if(e.lengthComputable)$('import-progress').textContent=`正在传入本机服务：${Math.round(e.loaded/e.total*100)}%`;};
+  request.upload.onprogress=e=>{if(e.lengthComputable)$('import-progress').textContent=`正在传入本机服务：${Math.round(e.loaded/e.total*PERCENT_SCALE)}%`;};
   request.onload=()=>{try{const body=JSON.parse(request.responseText);if(request.status>=400)reject(new Error(body.error));else resolve(body);}catch{reject(new Error('导入响应无效'));}};
   request.onerror=()=>reject(new Error('本机文件传输失败'));request.send(file);
 });}
@@ -290,7 +356,7 @@ async function watchImport(job){
       localStorage.removeItem('ors-import-job');await loadCatalog(job.dataset_id);toast('文件解析完成，已载入三维结果');return;
     }
     if(job.status==='failed'){localStorage.removeItem('ors-import-job');throw new Error(job.message);}
-    await new Promise(resolve=>setTimeout(resolve,1000));job=await api('/api/imports/'+job.id);
+    await new Promise(resolve=>setTimeout(resolve,IMPORT_POLL_INTERVAL_MS));job=await api('/api/imports/'+job.id);
   }
 }
 
@@ -307,19 +373,14 @@ $('section-distance-number').onchange=()=>updateSection($('section-distance-numb
 $('section-distance-number').oninput=()=>{const value=$('section-distance-number').value;if(value!==''&&Number.isFinite(Number(value)))updateSection(value);};
 $('section-center').onclick=()=>updateSection(0);
 $('section-face').onclick=()=>{state.faceSection=true;updateSection($('section-distance-number').value,true);section?.face(true);$('auto-rotate').setAttribute('aria-pressed','false');toast('已正对剖面 · 正交投影');};
-$('perspective-view').onclick=()=>{
-  state.faceSection=false;
-  if(state.object?.kind==='mesh'){state.meshMPR=false;updateMeshMode();}
-  else if(state.object?.kind==='volume'&&$('volume-mode').value==='mpr'){$('volume-mode').value='mip';updateVolumeMode();}
-  scene?.perspective();$('auto-rotate').setAttribute('aria-pressed','false');
-};
+$('perspective-view').onclick=viewControls.show3D;
 $('viewport').addEventListener('pointerdown',()=>state.faceSection=false);
 $('fit-view').onclick=()=>{state.faceSection=false;scene?.fit();};document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{state.faceSection=false;scene?.view(b.dataset.view);});
 $('auto-rotate').onclick=()=>{state.faceSection=false;const value=$('auto-rotate').getAttribute('aria-pressed')!=='true';$('auto-rotate').setAttribute('aria-pressed',value);scene?.rotate(value);};
 $('screenshot').onclick=()=>{if(!scene)return;if(mpr.active&&!mpr.ready())return toast('当前切面数据正在更新，请稍后截图');const a=$('save-screenshot');a.href=mpr.screenshot();a.download='ORS_'+(mpr.active?'MPR':'3D')+'_'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';$('screenshot-image').src=a.href;$('screenshot-dialog').showModal();};
 $('close-screenshot').onclick=()=>{$('screenshot-dialog').close();$('screenshot-image').removeAttribute('src');$('save-screenshot').removeAttribute('href');};
-$('mpr-toggle').onclick=()=>{if(state.object?.kind==='mesh'){state.meshMPR=!state.meshMPR;updateMeshMode();}else{$('volume-mode').value=mpr.active?'mip':'mpr';updateVolumeMode();}};
-['x','y','z'].forEach((axis,i)=>{
+$('mpr-toggle').onclick=viewControls.toggleMPR;
+AXIS_KEYS.forEach((axis,i)=>{
   const update=value=>{if(value===''||!Number.isFinite(Number(value)))return;const next=mpr.indices.slice();next[i]=Number(value);updateMeshPosition(next);};
   $('mesh-'+axis).oninput=event=>update(event.target.value);
   $('mesh-'+axis+'-number').oninput=event=>update(event.target.value);
@@ -328,19 +389,19 @@ $('mpr-toggle').onclick=()=>{if(state.object?.kind==='mesh'){state.meshMPR=!stat
 $('mesh-center').onclick=()=>updateMeshPosition(mpr.meshSections.center.slice());
 function updateMeshDisplay(){
   const mode=$('mesh-fill-mode').value,opacity=Number($('mesh-fill-opacity').value);
-  $('mesh-fill-opacity-field').hidden=mode==='line';$('mesh-fill-opacity-value').textContent=opacity+'%';mpr.setMeshDisplay(mode,opacity/100);
+  $('mesh-fill-opacity-field').hidden=mode==='line';$('mesh-fill-opacity-value').textContent=opacity+'%';mpr.setMeshDisplay(mode,opacity/PERCENT_SCALE);
 }
 $('mesh-fill-mode').onchange=updateMeshDisplay;$('mesh-fill-opacity').oninput=updateMeshDisplay;
 updateMeshDisplay();
-$('opacity').oninput=()=>{$('opacity-value').textContent=$('opacity').value+'%';scene?.opacity(Number($('opacity').value)/100);};
+$('opacity').oninput=()=>{$('opacity-value').textContent=$('opacity').value+'%';scene?.opacity(Number($('opacity').value)/PERCENT_SCALE);};
 $('wireframe').onchange=()=>scene?.wireframe($('wireframe').checked);$('show-grid').onchange=()=>scene?.showGrid($('show-grid').checked);$('show-box').onchange=()=>scene?.showBox($('show-box').checked);
 $('scalar-select').onchange=selectScalar;$('volume-mode').onchange=updateVolumeMode;
 $('window-low').oninput=updateWindow;$('window-high').oninput=updateWindow;
-$('iso').oninput=()=>{$('iso-value').textContent=$('iso').value+'%';scene?.iso(Number($('iso').value)/100);};
-['x','y','z'].forEach((axis,i)=>$('slice-'+axis).oninput=()=>updateSlice(axis,i));$('all-labels').onclick=()=>selectLabel(0);
+$('iso').oninput=()=>{$('iso-value').textContent=$('iso').value+'%';scene?.iso(Number($('iso').value)/PERCENT_SCALE);};
+AXIS_KEYS.forEach((axis,i)=>$('slice-'+axis).oninput=()=>updateSlice(axis,i));$('all-labels').onclick=()=>selectLabel(0);
 $('show-table').onclick=()=>showTable(true);$('table-select').onchange=()=>showTable(true);
 $('close-table').onclick=()=>{$('table-panel').hidden=true;$('stage').classList.remove('has-table');};
-$('table-prev').onclick=()=>{state.tableStart=Math.max(0,state.tableStart-50);showTable();};$('table-next').onclick=()=>{state.tableStart+=50;showTable();};
+$('table-prev').onclick=()=>{state.tableStart=Math.max(0,state.tableStart-TABLE_PAGE_SIZE);showTable();};$('table-next').onclick=()=>{state.tableStart+=TABLE_PAGE_SIZE;showTable();};
 $('add-dataset').onclick=openDialog;$('empty-add').onclick=openDialog;$('close-dialog').onclick=()=>$('add-dialog').close();
 $('toggle-inspector').onclick=()=>document.body.classList.toggle('inspector-open');
 $('close-inspector').onclick=()=>document.body.classList.remove('inspector-open');

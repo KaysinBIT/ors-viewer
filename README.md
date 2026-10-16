@@ -27,7 +27,7 @@
 
 ## Windows 免安装版
 
-1. 从 Releases 下载 `ORSViewer-0.9.1RC2-Windows-x64.zip`。
+1. 从 Releases 下载 `ORSViewer-1.0.0-Windows-x64.zip`。
 2. 完整解压，保持 `ORSViewer.exe` 与 `_internal` 目录在一起。
 3. 双击 `ORSViewer.exe`。启动窗口不会自动打开网页。检查端口（0 为自动分配）和数据目录，点击“选择文件夹…”可修改目录。
 4. 点击“保存并启动服务”，显示本地网址后，再手动点击“打开三维界面”。
@@ -39,7 +39,7 @@
 
 运行后可点击“停止服务并修改”重新设置端口和目录，再启动服务并手动打开页面。停止服务或关闭启动窗口会中断未完成任务，已有输出保留。更换目录不会移动或删除旧数据。Windows 的 `%LOCALAPPDATA%/ORSViewer/settings.json` 保存目录、端口和主题偏好。
 
-0.9.1RC2 为候选发布版，GitHub 标记为预发布；Python 包版本使用标准格式 `0.9.1rc2`。
+1.0.0 为正式版。Windows 发行包、源码包和 Python 包使用相同版本号。
 
 ## 从源码运行
 
@@ -135,3 +135,20 @@ Windows 构建产生独立程序目录、ZIP 和 SHA-256 校验文件。源码�
 ## 许可证
 
 本项目使用 [MIT License](LICENSE)。第三方组件许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。内置四面体为程序生成的示例，不包含用户数据。
+
+## 代码结构与兼容性
+
+1.0.0 以 v0.9.1RC2 的可观察行为为兼容基准，整理界面调度和 HTTP 路由，不改变解析、简化和切面算法。
+
+| 模块 | 职责 |
+| --- | --- |
+| `viewer/web/view-controls.js` | 统一网格、体数据的 3D / 三切面状态同步 |
+| `viewer/web/data-client.js` | JSON 与二进制预览请求，保留原有错误和取消行为 |
+| `viewer/web/export-ply.js` | 原有 PLY 二进制格式的生成 |
+| `viewer/web/ui-constants.js` | 现有分页数量、百分比及等待时间的命名常量 |
+| `viewer/web/app.js` | 对象选择、预览请求、结果呈现和测量表的协调 |
+| `viewer/server.py` | 分离对象响应、设置、上传与 JSON 请求读取，保留状态码、限制和授权检查 |
+
+回归测试包含重构前捕获的 68 组视图状态基准与 PLY 字节基准；测试不需要 Dragonfly。运行 Python 测试及 `tests/test_*.mjs`，或查看 Windows / Linux 持续集成结果。
+
+显示仍使用原有精度与数据格式；版本号、发行说明和代码组织变更不扩大专有格式的解析范围。体数据退出三切面仍切换到最大强度投影，原始网格仍默认保留 100%。

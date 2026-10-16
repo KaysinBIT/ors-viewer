@@ -7,7 +7,7 @@ import sys
 import webbrowser
 from viewer.settings import settings_path, load_directory, validate_directory, validate_port
 
-VERSION = '0.9.1RC2'
+VERSION = '1.0.0'
 
 
 def configure_logs(directory):

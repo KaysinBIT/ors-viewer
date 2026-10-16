@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.0.0
+
+- Stable release retaining the v0.9.1RC2 file formats, UI operations and numerical algorithms.
+- Centralize 3D/MPR mode transitions and extract request, PLY export and UI constants modules.
+- Split preview loading, object reset and measurement table rendering into focused functions.
+- Separate HTTP object, settings and upload handlers while preserving authorization, errors and limits.
+- Add pre-refactor state and binary export characterization tests; verify mesh, volume and label workflows.
+- Retain manual desktop startup, complete original meshes and independent parsing without Dragonfly.
+
 ## 0.9.1RC2
 
 - Make the 3D button exit the three-plane layout for both meshes and volumes, synchronizing the mode controls and hiding section panes.

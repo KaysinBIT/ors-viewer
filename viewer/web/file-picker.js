@@ -1,3 +1,4 @@
+import {FILE_PAGE_SIZE, FILE_SEARCH_DELAY_MS} from './ui-constants.js';
 // Same-machine file selection without browser uploads or manually typed paths.
 export class LocalFilePicker {
   constructor(post){
@@ -8,9 +9,9 @@ export class LocalFilePicker {
     $('picker-roots').onclick=()=>this.load('');
     $('picker-up').onclick=()=>this.load(this.listing.parent);
     $('picker-confirm').onclick=()=>this.finish(this.kind==='directory'?this.listing?.path:this.selected?.path);
-    $('picker-prev').onclick=()=>this.load(this.listing.path,Math.max(0,this.listing.offset-200),true);
-    $('picker-next').onclick=()=>this.load(this.listing.path,this.listing.offset+200,true);
-    $('picker-search').oninput=()=>{clearTimeout(this.searchTimer);this.searchTimer=setTimeout(()=>this.load(this.listing?.path||'',0,true),180);};
+    $('picker-prev').onclick=()=>this.load(this.listing.path,Math.max(0,this.listing.offset-FILE_PAGE_SIZE),true);
+    $('picker-next').onclick=()=>this.load(this.listing.path,this.listing.offset+FILE_PAGE_SIZE,true);
+    $('picker-search').oninput=()=>{clearTimeout(this.searchTimer);this.searchTimer=setTimeout(()=>this.load(this.listing?.path||'',0,true),FILE_SEARCH_DELAY_MS);};
     $('picker-create').onclick=async()=>{
       try{
         const result=await this.post('/api/filesystem/mkdir',{path:this.listing.path,name:$('picker-folder-name').value});

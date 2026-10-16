@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = '0.9.1RC2'
+VERSION = '1.0.0'
 
 
 def main():
