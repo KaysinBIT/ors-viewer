@@ -1,21 +1,23 @@
 // Axis-aligned intersections of the displayed triangle array, without decimation.
-export function meshSections(positions,indices,coordinates,center,scale,epsilon,maxSegments=2000000){
+export function meshSections(positions,indices,coordinates,center,scale,epsilon,maxSegments=2000000,candidates=null){
   const chunks=[[],[],[]],current=[new Float32Array(65532),new Float32Array(65532),new Float32Array(65532)];
+  const flagChunks=[[],[],[]],flags=[new Uint8Array(10922),new Uint8Array(10922),new Uint8Array(10922)];
   const used=[0,0,0],counts=[0,0,0],coplanar=[0,0,0];
-  const emit=(axis,a,b)=>{
+  const emit=(axis,a,b,flat=0)=>{
     if(Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])<=epsilon)return;
     if(++counts[axis]>maxSegments)throw new Error('单切面截线超过 200 万段，未截断或自动简化。请移动切面，或手动调整三角面保留比例。');
-    if(used[axis]+6>current[axis].length){chunks[axis].push(current[axis]);current[axis]=new Float32Array(65532);used[axis]=0;}
+    if(used[axis]+6>current[axis].length){chunks[axis].push(current[axis]);flagChunks[axis].push(flags[axis]);current[axis]=new Float32Array(65532);flags[axis]=new Uint8Array(10922);used[axis]=0;}
+    flags[axis][used[axis]/6]=flat;
     for(const p of [a,b])for(let d=0;d<3;d++)current[axis][used[axis]++]=((d===axis?coordinates[axis]:p[d])-center[d])*scale;
   };
-  for(let i=0;i<indices.length;i+=3){
-    const a=indices[i]*3,b=indices[i+1]*3,c=indices[i+2]*3;
-    for(let axis=0;axis<3;axis++){
+  for(let axis=0;axis<3;axis++){
+    for(const group of candidates?.[axis]??[null])for(let face=0;face<(group?group.length:indices.length/3);face++){
+      const i=(group?group[face]:face)*3,a=indices[i]*3,b=indices[i+1]*3,c=indices[i+2]*3;
       const cut=coordinates[axis],da=positions[a+axis]-cut,db=positions[b+axis]-cut,dc=positions[c+axis]-cut;
       if((da>epsilon&&db>epsilon&&dc>epsilon)||(da<-epsilon&&db<-epsilon&&dc<-epsilon))continue;
       const ids=[a,b,c],dist=[da,db,dc],on=dist.map(d=>Math.abs(d)<=epsilon);
       const point=id=>[positions[id],positions[id+1],positions[id+2]];
-      if(on.every(Boolean)){coplanar[axis]++;emit(axis,point(a),point(b));emit(axis,point(b),point(c));emit(axis,point(c),point(a));continue;}
+      if(on.every(Boolean)){coplanar[axis]++;emit(axis,point(a),point(b),1);emit(axis,point(b),point(c),1);emit(axis,point(c),point(a),1);continue;}
       const hits=[];
       for(let j=0;j<3;j++){
         const k=(j+1)%3;
@@ -32,7 +34,8 @@ export function meshSections(positions,indices,coordinates,center,scale,epsilon,
     for(const chunk of chunks[axis]){output.set(chunk,offset);offset+=chunk.length;}
     output.set(current[axis].subarray(0,used[axis]),offset);return output;
   });
-  return {lines,counts,coplanar};
+  const coplanarFlags=counts.map((count,axis)=>{const output=new Uint8Array(count);let offset=0;for(const chunk of flagChunks[axis]){output.set(chunk,offset);offset+=chunk.length;}output.set(flags[axis].subarray(0,used[axis]/6),offset);return output;});
+  return {lines,counts,coplanar,coplanarFlags};
 }
 
 export function meshPlaneTransform(bounds,axis,width,height){

@@ -6,17 +6,21 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import tempfile
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = '0.8.1'
+VERSION = '0.9.0'
 
 
 def main():
     if sys.platform != 'win32': raise SystemExit('Build the Windows distribution on Windows.')
     subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-q'], cwd=ROOT, check=True)
-    subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', 'ORSViewer.spec'], cwd=ROOT, check=True)
-    folder = ROOT / 'dist' / 'ORSViewer'
+    (ROOT / 'build').mkdir(exist_ok=True)
+    (ROOT / 'dist').mkdir(exist_ok=True)
+    staging = Path(tempfile.mkdtemp(prefix=f'windows-{VERSION}-', dir=ROOT / 'build'))
+    subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', '--distpath', str(staging), 'ORSViewer.spec'], cwd=ROOT, check=True)
+    folder = staging / 'ORSViewer'
     for name in ['README.md', 'LICENSE', 'CHANGELOG.md', 'THIRD_PARTY_NOTICES.md', 'INDEPENDENT_IMPLEMENTATION.txt']:
         shutil.copy2(ROOT / name, folder / name)
     shutil.copy2(ROOT / 'viewer/web/manual.pdf', folder / 'ORSViewer-User-Manual-zh-CN.pdf')

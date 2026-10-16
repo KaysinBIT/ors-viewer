@@ -3,18 +3,21 @@ import { AXES, IN_PLANE, clampIndex, planeTransform, imageToScreen, screenToIndi
 import {MeshSections} from './mesh-sections.js';
 import {meshPlaneTransform,meshToScreen,screenToMesh} from './mesh-sections-math.js';
 import {THEMES} from './themes.js';
+import {clampZoom,zoomImageTransform,zoomMeshTransform,panImageFocus,panMeshFocus} from './pane-view.js';
 
 export class MPRView {
   constructor(layout, scene, onPosition, onRange=()=>{}) {
     this.layout=layout;this.scene=scene;this.onPosition=onPosition;this.indices=[0,0,0];this.panes=[];
-    this.low=0;this.high=1;this.generation=0;this.kind='volume';this.theme=THEMES.mono;
+    this.low=0;this.high=1;this.generation=0;this.kind='volume';this.theme=THEMES.mono;this.fillMode='both';this.fillOpacity=.35;
     if(scene)this.meshSections=new MeshSections(scene,data=>{
       this.meshResult=data;
-      for(const p of this.panes){p.panel.classList.remove('pending');p.status.textContent=`${data.counts[p.axis].toLocaleString()} 段${data.coplanar[p.axis]?' · 共面三角边':''}`;
-        p.canvas.dataset.loadedPosition=String(data.coordinates[p.axis]);p.canvas.dataset.revision=String(data.revision);this.draw(p);}
+      for(const p of this.panes){
+        p.canvas.dataset.loadedPosition=String(data.coordinates[p.axis]);p.canvas.dataset.revision=String(data.revision);this.draw(p);this.recordFrame(p,data.coordinates[p.axis]);}
+      this.meshStatus();
     },(status,message)=>{
-      this.meshResult=null;
-      for(const p of this.panes){p.panel.classList.add('pending');p.status.textContent=status==='error'?message:'计算截线…';p.status.title=p.status.textContent;this.draw(p);}
+      for(const p of this.panes){p.panel.classList.add('pending');p.status.textContent=status==='error'?message:'计算截面…';p.status.title=p.status.textContent;this.draw(p);}
+      if(this.meshResult)this.meshStatus();
+      const note=document.getElementById('mesh-fill-status');if(note)note.textContent=status==='error'||status==='fill-error'?message:'截线持续更新，填充后台计算；标题标明当前显示位置。';
     });
     for (const axis of [1,2,0]) {
       const [u,v]=IN_PLANE[axis], panel=document.createElement('section');
@@ -25,26 +28,44 @@ export class MPRView {
       const body=document.createElement('div');body.className='mpr-image';
       const canvas=document.createElement('canvas');canvas.tabIndex=0;canvas.setAttribute('aria-label',`${AXES[axis]} 原始切面，滚轮翻片，点击或拖动十字定位`);
       const hint=document.createElement('span');hint.className='mpr-hint';hint.textContent=`${AXES[u]} →　${AXES[v]} ↑`;
-      body.append(canvas,hint);panel.append(header,body);layout.append(panel);
-      const p={axis,panel,header,status,body,canvas,image:document.createElement('canvas'),key:null};this.panes[axis]=p;
+      const zoomBar=document.createElement('div');zoomBar.className='mpr-zoom';
+      const zoomLabel=document.createElement('span');zoomLabel.textContent='缩放';
+      const zoomInput=document.createElement('input');zoomInput.type='range';zoomInput.min=25;zoomInput.max=800;zoomInput.step=5;zoomInput.value=100;zoomInput.setAttribute('aria-label',`${AXES[axis]} 切面缩放比例`);zoomInput.title='100% 为适应当前窗口';
+      const zoomOutput=document.createElement('output');zoomOutput.textContent='100%';
+      const focusButton=document.createElement('button');focusButton.textContent='定位';focusButton.title='把十字线移到视窗中心';focusButton.setAttribute('aria-label',`${AXES[axis]} 切面居中十字线`);
+      const resetButton=document.createElement('button');resetButton.textContent='适应';resetButton.title='恢复 100% 并显示完整切面';resetButton.setAttribute('aria-label',`${AXES[axis]} 切面恢复适应窗口`);
+      zoomBar.append(zoomLabel,zoomInput,zoomOutput,focusButton,resetButton);
+      body.append(canvas,hint);panel.append(header,body,zoomBar);layout.append(panel);
+      const p={axis,panel,header,status,body,canvas,zoomBar,zoomInput,zoomOutput,zoom:1,focus:null,image:document.createElement('canvas'),key:null};this.panes[axis]=p;
+      zoomInput.oninput=()=>{p.zoom=clampZoom(Number(zoomInput.value)/100);zoomOutput.textContent=Math.round(p.zoom*100)+'%';this.draw(p);};
+      focusButton.onclick=()=>{if(!this.id)return;p.focus=this.crosshairFocus(p);this.draw(p);};
+      resetButton.onclick=()=>{this.resetPane(p);this.draw(p);};
       p.queue=new LatestRequest(async(job,signal)=>{
         const response=await fetch(`/api/objects/${job.id}/slice?axis=${axis}&index=${job.index}&time=${job.time}`,{signal});
         if(!response.ok)throw new Error((await response.json()).error);
         return parsePacket(await response.arrayBuffer());
       },(packet,job)=>{
         if(packet.meta.range)onRange(packet.meta.range);
-        p.packet=packet;p.loadedKey=job.key;p.status.textContent=`${job.index} / ${this.shape[axis]-1} · 原始切片`;
+        p.packet=packet;p.loadedKey=job.key;const current=job.key===p.key;p.status.textContent=`${job.index} / ${this.shape[axis]-1} · ${current?'原始切片':'当前显示 · 更新中'}`;
         p.canvas.dataset.loadedIndex=job.index;p.canvas.dataset.time=job.time;p.canvas.dataset.source='original';
-        p.panel.classList.remove('pending');this.colorize(p);this.draw(p);
-      },error=>{p.status.textContent=error.message;p.panel.classList.add('pending');p.packet=null;this.draw(p);});
+        p.panel.classList.toggle('pending',!current);this.colorize(p);this.draw(p);this.recordFrame(p,job.index);
+      },error=>{p.status.textContent=error.message;p.panel.classList.add('pending');p.packet=null;this.draw(p);},true);
       new ResizeObserver(()=>this.draw(p)).observe(body);
       const locate=event=>{
         if(!this.active||!p.transform)return;
         const rect=canvas.getBoundingClientRect(),xy=this.kind==='mesh'?screenToMesh(p.transform,event.clientX-rect.left,event.clientY-rect.top):screenToIndices(p.transform,event.clientX-rect.left,event.clientY-rect.top);
         if(!xy)return;const next=this.indices.slice();next[u]=this.kind==='mesh'?xy[0]/this.meshSections.scale+this.meshSections.center[u]:xy[0];next[v]=this.kind==='mesh'?xy[1]/this.meshSections.scale+this.meshSections.center[v]:xy[1];this.onPosition(next);
       };
-      canvas.addEventListener('pointerdown',event=>{if(event.button!==0)return;canvas.focus();canvas.setPointerCapture(event.pointerId);locate(event);});
-      canvas.addEventListener('pointermove',event=>{if(event.buttons&1)locate(event);});
+      canvas.addEventListener('contextmenu',event=>event.preventDefault());
+      canvas.addEventListener('pointerdown',event=>{
+        if(event.button!==0&&event.button!==2)return;canvas.focus();canvas.setPointerCapture(event.pointerId);
+        if(event.button===2&&p.transform){event.preventDefault();p.drag=[event.clientX,event.clientY];p.focus=this.paneFocus(p);}else if(event.button===0)locate(event);
+      });
+      canvas.addEventListener('pointermove',event=>{
+        if((event.buttons&2)&&p.drag&&p.transform){const dx=event.clientX-p.drag[0],dy=event.clientY-p.drag[1];p.focus=this.kind==='mesh'?panMeshFocus(p.transform,p.focus,dx,dy):panImageFocus(p.transform,p.focus,dx,dy);p.drag=[event.clientX,event.clientY];this.draw(p);}
+        else if(event.buttons&1)locate(event);
+      });
+      for(const name of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(name,()=>p.drag=null);
       canvas.addEventListener('wheel',event=>{event.preventDefault();if(!this.active||!event.deltaY)return;
         const next=this.indices.slice();next[axis]=this.clamp(axis,next[axis]+Math.sign(event.deltaY)*this.step(axis));this.onPosition(next);
       },{passive:false});
@@ -70,10 +91,12 @@ export class MPRView {
   clear() {
     this.setActive(false);this.id=null;this.probe.reset();this.probeKey=null;
     this.meshSections?.clear();this.meshResult=null;this.meshPacket=null;
-    for(const p of this.panes){p.queue.reset();p.packet=null;p.key=null;p.loadedKey=null;delete p.canvas.dataset.loadedIndex;}
+    this.resetViews?.();
+    for(const p of this.panes){p.queue.reset();p.packet=null;p.key=null;p.loadedKey=null;p.frames=[];for(const key of ['loadedIndex','requestedIndex','loadedPosition','requestedPosition','revision','fillMode','fillStatus','recentFrames','source','time','xyz'])delete p.canvas.dataset[key];}
   }
   source(id, meta, time, indices) {
     // Reloads of the same source keep navigation; time changes invalidate planes.
+    if(this.id!==id)this.resetViews?.();
     this.kind='volume';this.id=id;this.shape=meta.grid.shape_tzyx.slice(1).reverse();this.time=time;this.indices=indices.slice();
     this.meshSections?.clear();this.meshPacket=null;
     for(const p of this.panes){p.queue.reset();p.packet=null;p.key=null;p.loadedKey=null;}
@@ -81,17 +104,46 @@ export class MPRView {
     if(this.active)this.position(indices);
   }
   meshSource(id,packet,coordinates){
+    if(this.id!==id)this.resetViews?.();
     this.kind='mesh';this.id=id;this.meshPacket=packet;this.indices=coordinates.slice();this.probe.reset();this.probeKey=null;this.meshResult=null;
     for(const p of this.panes){p.queue.reset();p.packet=null;p.key=null;p.loadedKey=null;}
     this.meshSections?.source(packet);if(this.active)this.position(coordinates);
   }
   clamp(axis,value){return this.kind==='mesh'?Math.max(this.meshSections.bounds[0][axis],Math.min(this.meshSections.bounds[1][axis],value)):clampIndex(value,this.shape[axis]);}
   step(axis){return this.kind==='mesh'?(this.meshSections.bounds[1][axis]-this.meshSections.bounds[0][axis])/200:1;}
+  resetPane(p){p.zoom=1;p.focus=null;p.drag=null;if(p.zoomInput)p.zoomInput.value=100;if(p.zoomOutput)p.zoomOutput.textContent='100%';}
+  resetViews(){for(const p of this.panes)this.resetPane(p);}
+  recordFrame(p,position){
+    const frames=p.frames??=[];if(frames.at(-1)?.position===position)return;
+    const duringDrag=Boolean(document.querySelector('#mesh-x:active,#mesh-y:active,#mesh-z:active,#slice-x:active,#slice-y:active,#slice-z:active,.mpr-image canvas:active'));
+    frames.push({position,duringDrag});if(frames.length>12)frames.shift();p.canvas.dataset.recentFrames=JSON.stringify(frames);
+  }
+  paneFocus(p){
+    if(p.focus)return p.focus.slice();const [u,v]=IN_PLANE[p.axis];
+    if(this.kind==='mesh'){const b=this.meshSections.normalized;return [(b[0][u]+b[1][u])/2,(b[0][v]+b[1][v])/2];}
+    return [this.shape[u]/2,this.shape[v]/2];
+  }
+  crosshairFocus(p){const [u,v]=IN_PLANE[p.axis];return this.kind==='mesh'?[u,v].map(i=>(this.indices[i]-this.meshSections.center[i])*this.meshSections.scale):[this.indices[u]+.5,this.shape[v]-this.indices[v]-.5];}
+  setMeshDisplay(mode,opacity){
+    this.fillMode=['line','fill','both'].includes(mode)?mode:'both';this.fillOpacity=Math.max(.1,Math.min(1,opacity));
+    this.meshSections?.setDisplay(this.fillMode,this.fillOpacity);this.meshStatus();for(const p of this.panes)this.draw(p);
+  }
+  meshStatus(){
+    if(this.kind!=='mesh'||!this.meshResult)return;const data=this.meshResult,warnings=[];
+    for(const p of this.panes){const fill=data.fills?.[p.axis],current=data.coordinates[p.axis]===this.indices[p.axis],pending=this.fillMode!=='line'&&fill?.status==='pending';
+      let detail=!current?`显示 ${AXES[p.axis]}=${Number(data.coordinates[p.axis].toPrecision(6))} · 更新中`:this.fillMode==='line'?(data.coplanar[p.axis]?'共面三角边':'截线'):fill?.status==='filled'?`${fill.loops} 个闭环 · ${fill.holes} 个孔洞`:fill?.message||'仅截线';
+      p.panel.classList.toggle('pending',!current||pending);
+      p.status.textContent=`${data.counts[p.axis].toLocaleString()} 段 · ${detail}`;p.status.title=p.status.textContent;
+      p.canvas.dataset.fillStatus=fill?.status||'unavailable';p.canvas.dataset.fillMode=this.fillMode;
+      if(this.fillMode!=='line'&&fill&& !['filled','empty'].includes(fill.status))warnings.push(AXES[p.axis]+'：'+fill.message);
+    }
+    const note=document.getElementById('mesh-fill-status');if(note)note.textContent=this.fillMode==='line'?'仅显示截线。':warnings.length?warnings.join('；'):'闭合轮廓按内部 / 孔洞交替填充；原始网格和导出文件不改变。';
+  }
   setTheme(theme){this.theme=theme;this.meshSections?.setTheme(theme);for(const p of this.panes){p.panel.style.setProperty('--plane-color',theme.axes[p.axis]);this.draw(p);}}
   setActive(active) {
     this.active=active;document.body.classList.toggle('mpr-active',active);document.body.dataset.mprKind=this.kind;this.layout.classList.toggle('mpr-layout',active);
     this.meshSections?.setActive(active&&this.kind==='mesh');
-    for(const p of this.panes)p.canvas.setAttribute('aria-label',`${AXES[p.axis]} ${this.kind==='mesh'?'网格截面':'原始切面'}，滚轮移动，点击或拖动十字定位`);
+    for(const p of this.panes)p.canvas.setAttribute('aria-label',`${AXES[p.axis]} ${this.kind==='mesh'?'网格截面':'原始切面'}，滚轮移动，左键定位，右键平移`);
     if(this.scene?.camera.isPerspectiveCamera){this.scene.camera.zoom=active?(this.kind==='mesh'?1.05:1.6):1;this.scene.camera.updateProjectionMatrix();this.scene.dirty=true;}
     this.readout.hidden=!active;document.getElementById('volume-3d-heading').hidden=!active;
     if(active&&this.id)this.position(this.indices);
@@ -136,10 +188,11 @@ export class MPRView {
     const rect=p.body.getBoundingClientRect(),w=rect.width,h=rect.height;
     if(w<=0||h<=0)return;const dpr=Math.min(window.devicePixelRatio||1,2),cw=Math.round(w*dpr),ch=Math.round(h*dpr);
     if(p.canvas.width!==cw||p.canvas.height!==ch){p.canvas.width=cw;p.canvas.height=ch;}
+    p.canvas.dataset.zoom=String(Math.round(p.zoom*100));p.canvas.dataset.viewFocus=this.paneFocus(p).join(',');
     const ctx=p.canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.fillStyle=this.theme.canvas;ctx.fillRect(0,0,w,h);
     if(this.kind==='mesh'){this.drawMesh(p,ctx,w,h);return;}
     p.transform=null;if(!p.packet)return;
-    try{p.transform=planeTransform(this.shape,p.packet.meta.voxel_xyz_to_world,p.axis,w,h);}
+    try{p.transform=zoomImageTransform(planeTransform(this.shape,p.packet.meta.voxel_xyz_to_world,p.axis,w,h),p.zoom,w,h,this.paneFocus(p));}
     catch(error){p.status.textContent=error.message;return;}
     const t=p.transform,[u,v]=IN_PLANE[p.axis];
     ctx.save();ctx.transform(t.a,0,t.c,t.d,t.e,t.f);ctx.imageSmoothingEnabled=false;
@@ -152,9 +205,15 @@ export class MPRView {
   strokeCrosshair(ctx,axis){ctx.strokeStyle=this.theme.halo;ctx.lineWidth=3;ctx.stroke();ctx.strokeStyle=this.theme.axes[axis];ctx.lineWidth=1;ctx.stroke();ctx.setLineDash([]);}
   drawMesh(p,ctx,w,h){
     const mesh=this.meshSections;if(!mesh?.packet)return;
-    const t=p.transform=meshPlaneTransform(mesh.normalized,p.axis,w,h),[u,v]=IN_PLANE[p.axis];
-    const lines=this.meshResult?.lines[p.axis];
-    if(lines){ctx.strokeStyle=this.theme.axes[p.axis];ctx.lineWidth=1.5;ctx.beginPath();
+    const t=p.transform=zoomMeshTransform(meshPlaneTransform(mesh.normalized,p.axis,w,h),p.zoom,w,h,this.paneFocus(p)),[u,v]=IN_PLANE[p.axis];
+    const fill=this.meshResult?.fills?.[p.axis],filled=fill?.status==='filled',current=this.meshResult?.coordinates[p.axis]===this.indices[p.axis],showFill=filled&&current&&this.fillMode!=='line';
+    if(showFill){
+      ctx.save();ctx.fillStyle=this.theme.axes[p.axis];ctx.globalAlpha=this.fillOpacity;ctx.beginPath();
+      for(let j=0;j<fill.offsets.length-1;j++){const start=fill.offsets[j],end=fill.offsets[j+1];for(let i=start;i<end;i++){const xy=meshToScreen(t,fill.positions[i*3+u],fill.positions[i*3+v]);if(i===start)ctx.moveTo(...xy);else ctx.lineTo(...xy);}ctx.closePath();}
+      ctx.fill('evenodd');ctx.restore();
+    }
+    const lines=showFill?fill.boundary:this.meshResult?.lines[p.axis];
+    if(lines&&(this.fillMode!=='fill'||!filled||!current)){ctx.strokeStyle=this.theme.axes[p.axis];ctx.lineWidth=1.5;ctx.beginPath();
       for(let i=0;i<lines.length;i+=6){ctx.moveTo(...meshToScreen(t,lines[i+u],lines[i+v]));ctx.lineTo(...meshToScreen(t,lines[i+3+u],lines[i+3+v]));}ctx.stroke();}
     const local=this.indices.map((x,i)=>(x-mesh.center[i])*mesh.scale),xy=meshToScreen(t,local[u],local[v]);
     ctx.setLineDash(this.theme.dashes[u]);ctx.beginPath();ctx.moveTo(xy[0],t.top);ctx.lineTo(xy[0],t.top+t.height);this.strokeCrosshair(ctx,u);
@@ -166,13 +225,13 @@ export class MPRView {
     this.scene.screenshot();const rect=this.layout.getBoundingClientRect(),canvas=document.createElement('canvas');
     canvas.width=Math.round(rect.width*2);canvas.height=Math.round(rect.height*2)+50;
     const ctx=canvas.getContext('2d');ctx.scale(2,2);ctx.fillStyle=this.theme.header;ctx.fillRect(0,0,rect.width,rect.height+25);
-    const draw=(element,source,title,color)=>{const r=element.getBoundingClientRect(),x=r.left-rect.left,y=r.top-rect.top;
-      ctx.fillStyle=this.theme.header;ctx.fillRect(x,y,r.width,r.height);ctx.fillStyle=color;ctx.font='12px sans-serif';ctx.fillText(title,x+8,y+18);
-      ctx.drawImage(source,x,y+28,r.width,r.height-28);};
-    for(const p of this.panes)draw(p.panel,p.canvas,p.header.textContent,this.theme.axes[p.axis]);
+    const draw=(element,source,title,color,footer='')=>{const r=element.getBoundingClientRect(),x=r.left-rect.left,y=r.top-rect.top,im=source.getBoundingClientRect();
+      ctx.fillStyle=this.theme.header;ctx.fillRect(x,y,r.width,r.height);ctx.fillStyle=color;ctx.font='12px sans-serif';ctx.save();ctx.beginPath();ctx.rect(x+5,y,r.width-10,28);ctx.clip();ctx.fillText(title,x+8,y+18);ctx.restore();
+      ctx.drawImage(source,im.left-rect.left,im.top-rect.top,im.width,im.height);if(footer){ctx.fillStyle=this.theme.text;ctx.font='11px sans-serif';ctx.fillText(footer,x+8,y+r.height-10);}};
+    for(const p of this.panes)draw(p.panel,p.canvas,p.header.textContent,this.theme.axes[p.axis],`缩放 ${Math.round(p.zoom*100)}%${this.kind==='mesh'?' · '+({line:'仅截线',fill:'填充',both:'填充 + 轮廓'})[this.fillMode]:''}`);
     draw(document.getElementById('canvas-wrap'),this.scene.canvas,'3D · 三切面空间定位',this.theme.text);
     ctx.fillStyle=this.theme.text;ctx.font='12px sans-serif';ctx.fillText(this.readout.textContent,8,rect.height+18);
     return canvas.toDataURL('image/png');
   }
-  ready(){if(this.kind==='mesh')return Boolean(this.meshResult)&&this.meshSections.resultRevision===this.meshSections.revision;return this.panes.every(p=>p.packet&&p.loadedKey===p.key)&&this.readout.dataset.xyz===this.indices.join(',')&&this.readout.dataset.time===String(this.time)&&this.readout.dataset.object===this.id;}
+  ready(){if(this.kind==='mesh')return Boolean(this.meshResult)&&this.meshSections.resultRevision===this.meshSections.revision&&(this.fillMode==='line'||!this.meshResult.fills?.some(f=>f.status==='pending'));return this.panes.every(p=>p.packet&&p.loadedKey===p.key)&&this.readout.dataset.xyz===this.indices.join(',')&&this.readout.dataset.time===String(this.time)&&this.readout.dataset.object===this.id;}
 }

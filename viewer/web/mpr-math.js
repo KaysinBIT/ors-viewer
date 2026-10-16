@@ -28,13 +28,13 @@ export function screenToIndices(t, x, y) {
 
 // One active request, one replaceable pending request; stale results never apply.
 export class LatestRequest {
-  constructor(fetcher, accept, fail) { this.fetcher=fetcher;this.accept=accept;this.fail=fail;this.revision=0; }
+  constructor(fetcher, accept, fail, progressive=false) { this.fetcher=fetcher;this.accept=accept;this.fail=fail;this.revision=0;this.progressive=progressive;this.minimumRevision=0;this.lastAcceptedRevision=0; }
   submit(value) { this.pending={value, revision:++this.revision};this.dispatch(); }
-  reset() { ++this.revision;this.pending=null;this.controller?.abort(); }
+  reset() { this.minimumRevision=++this.revision;this.lastAcceptedRevision=this.revision;this.pending=null;this.controller?.abort(); }
   async dispatch() {
     if (this.busy || !this.pending) return;
     this.busy=true;const job=this.pending;this.pending=null;this.controller=new AbortController();
-    try { const result=await this.fetcher(job.value,this.controller.signal);if(job.revision===this.revision)this.accept(result,job.value); }
+    try { const result=await this.fetcher(job.value,this.controller.signal);if(job.revision>=this.minimumRevision&&(job.revision===this.revision||(this.progressive&&job.revision>this.lastAcceptedRevision))){this.lastAcceptedRevision=job.revision;this.accept(result,job.value);} }
     catch(error) { if(job.revision===this.revision && error.name!=='AbortError')this.fail(error,job.value); }
     finally { this.busy=false;this.controller=null;this.dispatch(); }
   }

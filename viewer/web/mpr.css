@@ -10,11 +10,14 @@
 .mpr-heading b{color:var(--plane-color);font-size:11px;font-weight:600}.mpr-heading span{overflow:hidden;text-overflow:ellipsis}
 .mpr-image{position:relative;min-height:0;flex:1;overflow:hidden}.mpr-image canvas{position:absolute;inset:0;width:100%;height:100%;touch-action:none;cursor:crosshair}
 .mpr-image canvas:focus-visible{outline:1px solid #fff;outline-offset:-3px}.mpr-hint{position:absolute;bottom:6px;left:8px;pointer-events:none;font-size:9px;color:var(--muted);text-shadow:0 1px 2px #000}
+.mpr-zoom{height:32px;flex:0 0 32px;display:flex;align-items:center;gap:6px;padding:0 7px;background:var(--view-heading);color:var(--muted);font-size:10px;border-top:1px solid var(--border)}
+.mpr-zoom input[type=range]{min-width:30px;flex:1;width:0;margin:0;height:3px}.mpr-zoom output{width:35px;text-align:right;font-size:10px;font-variant-numeric:tabular-nums}.mpr-zoom button{padding:3px 6px;font-size:10px;white-space:nowrap}.mpr-zoom>span{white-space:nowrap}
+@media(max-width:700px){.mpr-zoom{gap:3px;padding:0 4px;font-size:9px}.mpr-zoom>span{display:none}.mpr-zoom button{padding:3px 4px;font-size:9px}.mpr-zoom output{font-size:9px;width:30px}}
 .mpr-pane.pending .mpr-heading span{color:#f1cb85}
 #mpr-readout{position:absolute;left:16px;right:16px;bottom:36px;height:20px;line-height:20px;color:var(--text);font-size:11px;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .stage.has-table #view-layout.mpr-layout{bottom:320px}.stage.has-table #mpr-readout{bottom:292px}.stage.has-table .mpr-layout #canvas-wrap{bottom:auto}
 #mesh-mpr-controls input[type=number]{padding:6px 9px;font-size:11px;margin-bottom:5px;font-variant-numeric:tabular-nums}
-.mpr-active .canvas-footer{font-size:9px}.mpr-active .canvas-footer>span:first-child{font-size:0}.mpr-active .canvas-footer>span:first-child::after{content:'二维：拖动十字线 / 滚轮移动　·　三维：旋转 / 缩放';font-size:9px}
+.mpr-active .canvas-footer{font-size:9px}.mpr-active .canvas-footer>span:first-child{font-size:0}.mpr-active .canvas-footer>span:first-child::after{content:'二维：左键定位 / 右键平移 / 滚轮翻片　·　三维：旋转 / 缩放';font-size:9px}
 body[data-mpr-kind=volume].mpr-active .inspector>.inspector-section:has(#quality){display:none}
 @media(max-width:1150px){#view-layout.mpr-layout{inset:150px 8px 72px;gap:6px}.mpr-heading{padding:0 5px}.mpr-heading span{font-size:9px}.mpr-active .view-toolbar{left:8px;gap:0}.mpr-active .view-toolbar button{padding:7px 5px}#mpr-readout{left:9px;bottom:44px}}
 @media(max-width:700px){.mpr-active .workspace{grid-template-columns:150px minmax(230px,1fr)}.mpr-active .sidebar{padding-left:7px;padding-right:7px}.mpr-active .object-icon{display:none}.mpr-active .view-toolbar button[data-view],.mpr-active #auto-rotate,.mpr-active .view-toolbar i{display:none}.mpr-heading{flex-wrap:wrap;align-content:center;gap:1px;height:36px;flex-basis:36px}.mpr-heading b,.mpr-heading span{width:100%;font-size:9px}.mpr-active .canvas-footer{display:none}#view-layout.mpr-layout{bottom:42px;top:145px}#mpr-readout{bottom:12px;font-size:10px}}

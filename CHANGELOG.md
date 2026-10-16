@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.0
+
+- Add independent 25–800% zoom sliders, right-button panning, crosshair centering and fit controls to all three 2D planes.
+- Add line, fill and fill-with-outline mesh section modes with adjustable fill opacity.
+- Preserve holes and nested islands; reject open, branched, self-intersecting or ambiguous contours instead of inventing a fill.
+- Refresh sections continuously during movement using spatial candidate indexing and cached unchanged planes, without decimation.
+- Publish contour frames before fill validation and label displayed positions when computation trails input.
+- Preserve zoom, pan and fill appearance in four-window screenshots and update the offline manuals.
+
 ## 0.8.1
 
 - Release retained mesh packet references when leaving mesh views or switching to volume data, reducing memory use after viewing large meshes.

@@ -4,12 +4,12 @@ import {THEMES} from './themes.js';
 export class MeshSections {
   constructor(view,onResult,onStatus){
     this.view=view;this.onResult=onResult;this.onStatus=onStatus;this.root=new THREE.Group();view.scene.add(this.root);
-    this.theme=THEMES.mono;this.revision=0;this.active=false;
+    this.theme=THEMES.mono;this.revision=0;this.active=false;this.displayMode='both';this.fillOpacity=.35;
   }
   clear(){
     this.worker?.terminate();this.worker=null;this.workerReady=false;this.busy=false;this.pending=null;this.failed=false;
     this.root.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});this.root.clear();this.packet=null;
-    this.planes=[];this.edges=[];this.lines=[];this.resultRevision=-1;this.revision++;
+    this.planes=[];this.edges=[];this.lines=[];this.caps=[];this.result=null;this.resultRevision=-1;this.revision++;
   }
   source(packet){
     this.clear();this.packet=packet;
@@ -20,12 +20,30 @@ export class MeshSections {
       const plane=new THREE.Mesh(new THREE.PlaneGeometry(1,1),new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:.07,depthWrite:false}));
       const edge=new THREE.LineLoop(new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(new Float32Array(12),3)),new THREE.LineBasicMaterial({depthTest:false}));
       const line=new THREE.LineSegments(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({depthTest:false}));
+      const cap=new THREE.Mesh(new THREE.BufferGeometry(),new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:this.fillOpacity,depthTest:false,depthWrite:false}));
+      cap.frustumCulled=false;cap.renderOrder=2;cap.visible=false;
       plane.matrixAutoUpdate=false;plane.frustumCulled=edge.frustumCulled=line.frustumCulled=false;edge.renderOrder=3;line.renderOrder=4;
-      this.planes.push(plane);this.edges.push(edge);this.lines.push(line);this.root.add(plane,edge,line);
+      this.planes.push(plane);this.edges.push(edge);this.lines.push(line);this.caps.push(cap);this.root.add(plane,edge,cap,line);
     }
     this.root.visible=this.active;this.setTheme(this.theme);
   }
-  setTheme(theme){this.theme=theme;for(let i=0;i<(this.planes?.length||0);i++)for(const o of [this.planes[i],this.edges[i],this.lines[i]])o.material.color.set(theme.axes[i]);this.view.dirty=true;}
+  setTheme(theme){this.theme=theme;for(let i=0;i<(this.planes?.length||0);i++)for(const o of [this.planes[i],this.edges[i],this.lines[i],this.caps[i]])o.material.color.set(theme.axes[i]);this.view.dirty=true;}
+  setDisplay(mode,opacity){
+    this.displayMode=['line','fill','both'].includes(mode)?mode:'both';this.fillOpacity=Math.max(.1,Math.min(1,opacity));this.applyDisplay();
+  }
+  applyDisplay(){
+    const data=this.result;
+    for(let axis=0;axis<(this.caps?.length||0);axis++){
+      const fill=data?.fills?.[axis],filled=fill?.status==='filled',current=!data?.coordinates||data.coordinates[axis]===this.coordinates?.[axis],cap=this.caps[axis],line=this.lines[axis];
+      cap.material.opacity=this.fillOpacity;cap.visible=Boolean(filled&&current&&this.displayMode!=='line');
+      if(data){
+        const values=filled&&current&&this.displayMode!=='line'?fill.boundary:data.lines[axis];
+        if(line.geometry.attributes.position?.array!==values){line.geometry.dispose();line.geometry=new THREE.BufferGeometry();line.geometry.setAttribute('position',new THREE.BufferAttribute(values,3));}
+        line.visible=this.displayMode!=='fill'||!filled||!current;
+      }
+    }
+    this.view.dirty=true;
+  }
   setActive(active){
     this.active=active;this.root.visible=active;this.view.dirty=true;
     if(!active){this.pending=null;this.revision++;this.resultRevision=-1;}
@@ -41,8 +59,9 @@ export class MeshSections {
       this.planes[axis].matrix.makeBasis(e,f,n).setPosition(origin);
       const positions=this.edges[axis].geometry.attributes.position;
       [[lo[u],lo[v]],[hi[u],lo[v]],[hi[u],hi[v]],[lo[u],hi[v]]].forEach((xy,j)=>{const p=local.slice();p[u]=xy[0];p[v]=xy[1];positions.setXYZ(j,...p);});
-      positions.needsUpdate=true;this.lines[axis].visible=false;
+      positions.needsUpdate=true;
     }
+    this.applyDisplay();
     this.view.meshPlaneCoordinates=coordinates.slice();this.view.dirty=true;
     this.pending={type:'sections',revision:this.revision,coordinates:coordinates.slice(),center:this.center,scale:this.scale,
       epsilon:Math.max(this.view.bounds.getSize(new THREE.Vector3()).length()*1e-10,1e-20)};
@@ -57,12 +76,21 @@ export class MeshSections {
         if(this.packet!==packet||this.worker!==worker)return;
         if(data.type==='ready')this.workerReady=true;
         else {
-          this.busy=false;
-          if(this.active&&data.revision===this.revision){
+          if(data.type==='error'||(data.type==='sections'&&data.phase!=='fill'))this.busy=false;
+          const accept=data.phase==='lines'?data.revision>=this.resultRevision:data.revision===this.revision;
+          if(this.active&&accept){
             if(data.type==='error')this.onStatus('error',data.message);
+            else if(data.type==='fill-error'){
+              if(this.result)for(const fill of this.result.fills||[])if(fill.status==='pending'){fill.status='invalid';fill.message='填充计算失败，保留截线';}
+              this.onStatus('fill-error','填充计算失败，当前截线继续显示。');
+            }
             else if(data.type==='sections'){
-              this.resultRevision=data.revision;
-              data.lines.forEach((values,axis)=>{const line=this.lines[axis];line.geometry.dispose();line.geometry=new THREE.BufferGeometry();line.geometry.setAttribute('position',new THREE.BufferAttribute(values,3));line.visible=true;});
+              this.resultRevision=data.revision;this.result=data;
+              data.lines.forEach((values,axis)=>{
+                const cap=this.caps[axis],fill=data.fills?.[axis];cap.geometry.dispose();cap.geometry=new THREE.BufferGeometry();
+                if(fill?.status==='filled'){cap.geometry.setAttribute('position',new THREE.BufferAttribute(fill.positions,3));cap.geometry.setIndex(new THREE.BufferAttribute(fill.indices,1));}
+              });
+              this.applyDisplay();
               this.view.dirty=true;this.onResult(data);
             }
           }
@@ -71,7 +99,7 @@ export class MeshSections {
       };
       worker.onerror=()=>{this.failed=true;worker.terminate();this.worker=null;this.busy=false;this.onStatus('error','网格截线计算失败，三维定位仍可操作。请重新选择对象重试。');};
       const positions=new Float32Array(packet.arrays.positions),indices=new Uint32Array(packet.arrays.indices);
-      worker.postMessage({type:'mesh',positions,indices},[positions.buffer,indices.buffer]);
+      worker.postMessage({type:'mesh',positions,indices,bounds:this.bounds},[positions.buffer,indices.buffer]);
     }catch(error){this.failed=true;this.worker?.terminate();this.worker=null;this.onStatus('error','无法准备网格截线：'+error.message);}
   }
   dispatch(){if(this.worker&&this.workerReady&&!this.busy&&this.pending){this.busy=true;const job=this.pending;this.pending=null;this.worker.postMessage(job);}}

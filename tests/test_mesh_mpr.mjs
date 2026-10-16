@@ -6,9 +6,24 @@ import {MeshSections} from '../viewer/web/mesh-sections.js';
 import {SceneView} from '../viewer/web/scene.js';
 import {THEMES,themeFor} from '../viewer/web/themes.js';
 import {MPRView} from '../viewer/web/mpr.js';
+import {contourFill} from '../viewer/web/contour-fill.js';
+import {buildSectionIndex,querySectionIndex} from '../viewer/web/mesh-section-index.js';
 
 const vertices=new Float32Array([0,0,0,1,0,0,0,1,0,0,0,1]);
 const indices=new Uint32Array([0,2,1,0,1,3,1,2,3,2,0,3]);
+test('spatial index keeps every triangle and produces the same cuts as exhaustive traversal',()=>{
+  const points=[],faces=[];
+  for(let i=0;i<24;i++){const offset=points.length/3;for(let j=0;j<vertices.length;j++)points.push(vertices[j]+[i%4,Math.floor(i/4)%3,Math.floor(i/12)][j%3]*2);for(const v of indices)faces.push(v+offset);}
+  const p=new Float32Array(points),f=new Uint32Array(faces),before=p.slice(),order=f.slice(),index=buildSectionIndex(p,f,[[0,0,0],[7,5,3]],4);
+  assert.deepEqual(Array.from(index.faces).sort((a,b)=>a-b),Array.from({length:f.length/3},(_,i)=>i));
+  const sorted=values=>Array.from({length:values.length/6},(_,i)=>Array.from(values.slice(i*6,i*6+6)).join(',')).sort();
+  for(const cuts of [[.25,.4,.6],[2,2,2],[6.5,4.5,2.5],[-1,-1,-1]]){
+    const raw=meshSections(p,f,cuts,[0,0,0],1,1e-10),fast=meshSections(p,f,cuts,[0,0,0],1,1e-10,2000000,querySectionIndex(index,cuts,1e-10));
+    assert.deepEqual(fast.counts,raw.counts);for(let axis=0;axis<3;axis++)assert.deepEqual(sorted(fast.lines[axis]),sorted(raw.lines[axis]));
+  }
+  const subset=meshSections(p,f,[.3,.3,.3],[0,0,0],1,1e-10,2000000,querySectionIndex(index,[.3,.3,.3],1e-10,[true,false,false]));assert.equal(subset.counts[1],0);assert.equal(subset.counts[2],0);
+  assert.deepEqual(p,before);assert.deepEqual(f,order);
+});
 test('leaving a mesh releases retained geometry packets before a volume is loaded',()=>{
   const view={meshPacket:{arrays:{positions:vertices,indices}},meshResult:{lines:[]},id:'old',
     setActive(){},probe:{reset(){}},meshSections:{clear(){}},panes:[{queue:{reset(){}},canvas:{dataset:{loadedIndex:'0'}}}]};
@@ -75,4 +90,25 @@ test('shared palette updates background, mesh, locator and volume material toget
     assert.equal(view.volume.material.uniforms.uTint.value.getHexString(),new THREE.Color(theme.mesh).getHexString());
   }
   assert.equal(themeFor('invalid'),THEMES.mono);
+});
+test('completed contour frames remain visible during continuous motion while stale fill is rejected',()=>{
+  const saved=globalThis.Worker;let worker;globalThis.Worker=class {constructor(){worker=this;}postMessage(){}terminate(){}};
+  try{
+    const frames=[],view={scene:new THREE.Scene(),bounds:new THREE.Box3(new THREE.Vector3(),new THREE.Vector3(1,1,1)),group:{scale:{x:2}}};
+    const c=new MeshSections(view,data=>frames.push(data),()=>{});c.source({arrays:{positions:vertices,indices}});c.setActive(true);c.update([.2,.3,.4]);worker.onmessage({data:{type:'ready'}});const first=c.revision;c.update([.4,.3,.4]);
+    const data={type:'sections',phase:'lines',revision:first,coordinates:[.2,.3,.4],lines:[new Float32Array(6),new Float32Array(6),new Float32Array(6)]};
+    worker.onmessage({data});assert.equal(frames.length,1);assert.ok(c.lines.every(line=>line.visible));assert.deepEqual(view.meshPlaneCoordinates,[.4,.3,.4]);
+    worker.onmessage({data:{...data,phase:'fill'}});assert.equal(frames.length,1);c.clear();
+  }finally{globalThis.Worker=saved;}
+});
+test('fill modes control both cap and outline geometry and fall back on open sections',()=>{
+  const view={scene:new THREE.Scene(),bounds:new THREE.Box3(new THREE.Vector3(0,0,0),new THREE.Vector3(1,1,1)),group:{scale:{x:2}}};
+  const controller=new MeshSections(view,()=>{},()=>{});controller.source({arrays:{positions:vertices,indices}});controller.setActive(true);
+  const data=meshSections(vertices,indices,[.2,.3,.4],[.5,.5,.5],2,1e-10);data.fills=data.lines.map((line,axis)=>contourFill(line,axis,data.coplanarFlags[axis]));
+  controller.result=data;controller.resultRevision=controller.revision;
+  controller.setDisplay('both',.6);assert.ok(controller.caps.every(c=>c.visible&&c.material.opacity===.6));assert.ok(controller.lines.every(l=>l.visible));
+  controller.setDisplay('fill',.8);assert.ok(controller.caps.every(c=>c.visible));assert.ok(controller.lines.every(l=>!l.visible));
+  controller.setDisplay('line',.8);assert.ok(controller.caps.every(c=>!c.visible));assert.equal(controller.lines[0].geometry.attributes.position.array,data.lines[0]);
+  data.fills[0]={status:'open'};controller.setDisplay('fill',.5);assert.equal(controller.caps[0].visible,false);assert.equal(controller.lines[0].visible,true);
+  controller.clear();assert.equal(controller.result,null);assert.equal(controller.packet,null);assert.equal(controller.root.children.length,0);
 });

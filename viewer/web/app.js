@@ -321,6 +321,12 @@ $('mpr-toggle').onclick=()=>{if(state.object?.kind==='mesh'){state.meshMPR=!stat
   $('mesh-'+axis+'-number').onchange=event=>{update(event.target.value);event.target.value=mpr.indices[i];};
 });
 $('mesh-center').onclick=()=>updateMeshPosition(mpr.meshSections.center.slice());
+function updateMeshDisplay(){
+  const mode=$('mesh-fill-mode').value,opacity=Number($('mesh-fill-opacity').value);
+  $('mesh-fill-opacity-field').hidden=mode==='line';$('mesh-fill-opacity-value').textContent=opacity+'%';mpr.setMeshDisplay(mode,opacity/100);
+}
+$('mesh-fill-mode').onchange=updateMeshDisplay;$('mesh-fill-opacity').oninput=updateMeshDisplay;
+updateMeshDisplay();
 $('opacity').oninput=()=>{$('opacity-value').textContent=$('opacity').value+'%';scene?.opacity(Number($('opacity').value)/100);};
 $('wireframe').onchange=()=>scene?.wireframe($('wireframe').checked);$('show-grid').onchange=()=>scene?.showGrid($('show-grid').checked);$('show-box').onchange=()=>scene?.showBox($('show-box').checked);
 $('scalar-select').onchange=selectScalar;$('volume-mode').onchange=updateVolumeMode;
