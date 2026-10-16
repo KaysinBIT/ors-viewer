@@ -3,6 +3,8 @@ import { SectionController } from './section.js';
 import { LocalFilePicker } from './file-picker.js';
 import { MPRView } from './mpr.js';
 import { ServerSettings } from './server-settings.js';
+import {themeFor,THEMES} from './themes.js';
+import {LatestRequest} from './mpr-math.js';
 
 const $=id=>document.getElementById(id);
 const state={datasets:[],dataset:null,object:null,meta:null,preview:null,filter:'all',request:0,tableStart:0,selectedLabel:0};
@@ -10,7 +12,7 @@ const kinds={mesh:'三角网格',volume:'体数据',labels:'分割标签'};
 const icons={mesh:'◇',volume:'▧',labels:'◈'};
 const fmt=n=>Number(n).toLocaleString('zh-CN');
 const compact=n=>n>=1e6?(n/1e6).toFixed(2)+' M':n>=1e3?(n/1e3).toFixed(1)+' K':fmt(n);
-function number(v){if(v==null)return '—';if(typeof v!=='number')return String(v);if(!Number.isFinite(v))return '—';if(v===0)return '0';if(Math.abs(v)<.001||Math.abs(v)>=1e6)return v.toExponential(3);return Number(v.toPrecision(6)).toLocaleString('en-US');}
+function number(v){if(v==null)return '—';if(typeof v!=='number')return String(v);if(!Number.isFinite(v))return '—';if(v===0)return '0';if(Math.abs(v)<.001||Math.abs(v)>=1e6)return v.toExponential(3);return Number(v.toPrecision(6)).toLocaleString('en-US',{maximumSignificantDigits:6});}
 function el(tag,text,cls){const node=document.createElement(tag);if(text!=null)node.textContent=text;if(cls)node.className=cls;return node;}
 function showError(message){$('scene-error').textContent=message;$('scene-error').hidden=false;}
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(state.toastTimer);state.toastTimer=setTimeout(()=>$('toast').hidden=true,4500);}
@@ -58,7 +60,7 @@ function renderList(){
 async function selectObject(id){
   const object=state.dataset.objects.find(o=>o.id===id);if(!object)return;
   ++state.request;state.abort?.abort();
-  mpr.clear();$('section-controls').hidden=false;$('mpr-toggle').hidden=object.kind!=='volume';$('volume-mode').value='mpr';
+  mpr.clear();state.meshMPR=false;$('mesh-mpr-controls').hidden=true;$('section-controls').hidden=false;$('mpr-toggle').hidden=object.kind==='labels';$('volume-mode').value='mpr';
   state.object=object;state.selectedLabel=0;state.tableStart=0;state.meta=null;state.preview=null;
   if(scene?.camera.isOrthographicCamera)scene.perspective();
   $('retention').value=100;$('retention-value').textContent='100%';$('section-enabled').checked=false;$('section-distance').value=0;$('section-distance-number').value=0;$('section-fields').hidden=true;
@@ -115,7 +117,7 @@ async function loadPreview(){
     if(m.kind==='volume'){
       setupVolume(m);$('render-status').textContent=`3D 预览 ${m.sample_shape_zyx.slice().reverse().join(' × ')} · 二维切片为原始分辨率`;
       $('preview-note').textContent='CT 二维切片读取原始分辨率，按实际体素间距显示；窗口映射使用 float32，定位读数来自原始数值。三维快速纹理为采样预览，原始切片到达后同步替换定位平面。';
-    }else{$('render-status').textContent=`${m.focus_label?'标签 '+m.focus_label+' · ':''}${m.simplified===false?'原始网格':'当前显示'} ${fmt(m.preview_triangles||0)} 三角形`;}
+    }else{$('render-status').textContent=`${m.focus_label?'标签 '+m.focus_label+' · ':''}${m.simplified===false?'原始网格':'当前显示'} ${fmt(m.preview_triangles||0)} 三角形`;if(m.kind==='mesh')setupMeshMPR(packet);}
     const base=m.base_triangles||m.preview_triangles||0,ratio=m.actual_retention??100;
     $('retention-info').textContent=`${m.kind==='mesh'?'原始网格':'当前采样表面'} ${fmt(base)} → ${fmt(m.preview_triangles||0)} 面 · 实际保留 ${ratio.toFixed(2)}%`;
     $('download-preview').hidden=m.kind==='volume';
@@ -164,10 +166,28 @@ function updateVolumeMode(){
   if(state.preview?.meta.kind==='volume')updateSection();
 }
 function setSlicePosition(indices){
+  if(state.object?.kind==='mesh'){updateMeshPosition(indices);return;}
   ['x','y','z'].forEach((axis,i)=>{const input=$('slice-'+axis);input.value=indices[i];const value=Number(input.value);$('slice-'+axis+'-value').textContent=value;scene?.slice(i,value);});
   mpr.position(['x','y','z'].map(axis=>Number($('slice-'+axis).value)));
 }
 function updateSlice(){setSlicePosition(['x','y','z'].map(axis=>Number($('slice-'+axis).value)));}
+function setupMeshMPR(packet){
+  const bounds=[scene.bounds.min.toArray(),scene.bounds.max.toArray()],previous=mpr.id===state.object.id&&mpr.kind==='mesh'?mpr.indices:null;
+  const coordinates=bounds[0].map((x,i)=>Math.max(x,Math.min(bounds[1][i],previous?.[i]??(x+bounds[1][i])/2)));
+  mpr.meshSource(state.object.id,packet,coordinates);
+  ['x','y','z'].forEach((axis,i)=>{for(const suffix of ['', '-number']){const input=$('mesh-'+axis+suffix);input.min=bounds[0][i];input.max=bounds[1][i];input.step='any';input.disabled=bounds[0][i]===bounds[1][i];}});
+  updateMeshPosition(coordinates);updateMeshMode();
+}
+function updateMeshPosition(coordinates){
+  coordinates=coordinates.map((x,i)=>mpr.clamp(i,x));
+  ['x','y','z'].forEach((axis,i)=>{for(const suffix of ['', '-number']){const input=$('mesh-'+axis+suffix);if(input!==document.activeElement||suffix==='')input.value=coordinates[i];}$('mesh-'+axis+'-value').textContent=number(coordinates[i]);});
+  mpr.position(coordinates);
+}
+function updateMeshMode(){
+  const active=Boolean(state.meshMPR);$('mesh-mpr-controls').hidden=!active;$('section-controls').hidden=active;$('mpr-toggle').setAttribute('aria-pressed',String(active));
+  if(active){$('section-enabled').checked=false;state.faceSection=false;if(scene?.camera.isOrthographicCamera)scene.perspective();}
+  mpr.setActive(active);scene?.showGrid($('show-grid').checked);if(state.preview)updateSection();
+}
 function renderLabels(){
   const counts=state.meta.label_voxel_counts||{};$('label-list').replaceChildren();
   for(const [id,count] of Object.entries(counts).sort((a,b)=>Number(a[0])-Number(b[0]))){
@@ -229,6 +249,13 @@ const token=()=>document.querySelector('meta[name=viewer-token]').content;
 const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token()},body:JSON.stringify(body)});
 const picker=new LocalFilePicker(post);
 const serverSettings=new ServerSettings(api,post);
+function applyTheme(key){
+  const selected=Object.hasOwn(THEMES,key)?key:'mono',theme=themeFor(selected);document.body.dataset.theme=selected;$('theme-select').value=selected;
+  scene?.setTheme(theme);section?.setTheme(theme);mpr.setTheme(theme);
+}
+const themeSave=new LatestRequest(key=>post('/api/settings/theme',{theme:key}),()=>{},error=>toast('配色已切换，但未能保存：'+error.message));
+$('theme-select').onchange=()=>{const key=$('theme-select').value;applyTheme(key);themeSave.submit(key);};
+applyTheme('mono');
 function importMode(){const mode=$('import-mode').value;$('path-field').hidden=mode==='file';$('file-field').hidden=mode!=='file';$('folder-path').value='';$('import-file').required=mode==='file';$('path-label').textContent=mode==='directory'?'解析输出目录':'本地文件路径';$('browse-path').textContent=mode==='directory'?'选择目录':'选择文件';$('folder-path').placeholder=mode==='directory'?'尚未选择解析目录':'尚未选择文件';$('confirm-add').textContent=mode==='directory'?'载入数据':'解析并显示';}
 $('browse-path').onclick=async()=>{
   const directory=$('import-mode').value==='directory';
@@ -284,9 +311,16 @@ $('perspective-view').onclick=()=>{state.faceSection=false;scene?.perspective();
 $('viewport').addEventListener('pointerdown',()=>state.faceSection=false);
 $('fit-view').onclick=()=>{state.faceSection=false;scene?.fit();};document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{state.faceSection=false;scene?.view(b.dataset.view);});
 $('auto-rotate').onclick=()=>{state.faceSection=false;const value=$('auto-rotate').getAttribute('aria-pressed')!=='true';$('auto-rotate').setAttribute('aria-pressed',value);scene?.rotate(value);};
-$('screenshot').onclick=()=>{if(!scene)return;if(mpr.active&&!mpr.ready())return toast('当前切片正在读取，请稍后截图');const a=$('save-screenshot');a.href=mpr.screenshot();a.download='ORS_'+(mpr.active?'CT':'3D')+'_'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';$('screenshot-image').src=a.href;$('screenshot-dialog').showModal();};
+$('screenshot').onclick=()=>{if(!scene)return;if(mpr.active&&!mpr.ready())return toast('当前切面数据正在更新，请稍后截图');const a=$('save-screenshot');a.href=mpr.screenshot();a.download='ORS_'+(mpr.active?'MPR':'3D')+'_'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';$('screenshot-image').src=a.href;$('screenshot-dialog').showModal();};
 $('close-screenshot').onclick=()=>{$('screenshot-dialog').close();$('screenshot-image').removeAttribute('src');$('save-screenshot').removeAttribute('href');};
-$('mpr-toggle').onclick=()=>{$('volume-mode').value=mpr.active?'mip':'mpr';updateVolumeMode();};
+$('mpr-toggle').onclick=()=>{if(state.object?.kind==='mesh'){state.meshMPR=!state.meshMPR;updateMeshMode();}else{$('volume-mode').value=mpr.active?'mip':'mpr';updateVolumeMode();}};
+['x','y','z'].forEach((axis,i)=>{
+  const update=value=>{if(value===''||!Number.isFinite(Number(value)))return;const next=mpr.indices.slice();next[i]=Number(value);updateMeshPosition(next);};
+  $('mesh-'+axis).oninput=event=>update(event.target.value);
+  $('mesh-'+axis+'-number').oninput=event=>update(event.target.value);
+  $('mesh-'+axis+'-number').onchange=event=>{update(event.target.value);event.target.value=mpr.indices[i];};
+});
+$('mesh-center').onclick=()=>updateMeshPosition(mpr.meshSections.center.slice());
 $('opacity').oninput=()=>{$('opacity-value').textContent=$('opacity').value+'%';scene?.opacity(Number($('opacity').value)/100);};
 $('wireframe').onchange=()=>scene?.wireframe($('wireframe').checked);$('show-grid').onchange=()=>scene?.showGrid($('show-grid').checked);$('show-box').onchange=()=>scene?.showBox($('show-box').checked);
 $('scalar-select').onchange=selectScalar;$('volume-mode').onchange=updateVolumeMode;
@@ -313,6 +347,7 @@ $('add-form').onsubmit=async event=>{
 window.addEventListener('keydown',event=>{if(event.key==='Escape')document.body.classList.remove('inspector-open');if(event.key.toLowerCase()==='f'&&!document.querySelector('dialog[open]')&&!['INPUT','SELECT','TEXTAREA'].includes(event.target.tagName)){state.faceSection=false;scene?.fit();}});
 async function initialize(){
   const settings=await api('/api/settings');state.dataDirectory=settings.data_directory;
+  applyTheme(settings.theme);
   serverSettings.observe(settings);
   if(!settings.ready){
     $('app-status').textContent='首次使用 · 请选择数据目录';$('setup-message').textContent=settings.message||'解析结果、显示缓存和日志将保存在你选择的目录中。';

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+
+- Extend linked three-plane views to STL and ORS triangle meshes with exact plane intersections of the displayed geometry.
+- Add crosshair navigation, wheel and keyboard movement, source-coordinate inputs and synchronized 3D locators for meshes.
+- Compute mesh contours in a background worker without automatic mesh reduction; handle coplanar triangles explicitly.
+- Unify 3D and three-plane palettes with persistent monochrome, light and ocean themes.
+- Apply shared colors to backgrounds, solid mesh materials, guides, contour lines and exported screenshots.
+- Update the offline HTML and PDF user manuals.
+
 ## 0.7.1
 
 - Add a persistent web port setting with automatic and custom port modes.

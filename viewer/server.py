@@ -22,7 +22,7 @@ from .preview import PreviewCache, safe_file, unit_of
 from .slices import slice_packet, voxel_value
 from .imports import ImportJobs, EXTENSIONS
 from .file_browser import list_directory, create_directory
-from .settings import validate_directory, save_directory, load_port, save_port, validate_port
+from .settings import validate_directory, save_directory, load_port, save_port, validate_port, load_theme, save_theme
 
 HERE = Path(__file__).resolve().parent
 WEB = HERE / 'web'
@@ -153,7 +153,7 @@ def handler(catalog, cache, token, imports=None, workspace=None):
             try:
                 url = urlsplit(self.path);route = unquote(url.path);q = parse_qs(url.query)
                 if route == '/api/catalog': return self.json({'datasets': catalog.public()})
-                if route == '/api/health': return self.json({'ok': True, 'version': '0.7.1'})
+                if route == '/api/health': return self.json({'ok': True, 'version': '0.8.0'})
                 if route == '/api/settings':
                     return self.json(workspace.public() if workspace else {'ready': True, 'data_directory': None, 'message': ''})
                 parts = route.strip('/').split('/')
@@ -206,7 +206,7 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                 url = urlsplit(self.path)
                 size = int(self.headers.get('Content-Length', 0))
                 active_imports = workspace.imports if workspace else imports
-                if url.path in ('/api/filesystem/list', '/api/filesystem/mkdir', '/api/settings/data-directory', '/api/settings/port'):
+                if url.path in ('/api/filesystem/list', '/api/filesystem/mkdir', '/api/settings/data-directory', '/api/settings/port', '/api/settings/theme'):
                     if not 0 < size <= 8192: raise ValueError('请求大小无效')
                     body = json.loads(self.rfile.read(size))
                     if url.path == '/api/filesystem/list':
@@ -214,6 +214,9 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                     if url.path == '/api/filesystem/mkdir':
                         return self.json({'path': create_directory(body['path'], body['name'])})
                     if workspace is None: raise ValueError('数据目录设置不可用')
+                    if url.path == '/api/settings/theme':
+                        save_theme(workspace.settings_file, body['theme'])
+                        return self.json(workspace.public())
                     if url.path == '/api/settings/port':
                         workspace.choose_port(body['port'])
                         return self.json(workspace.public())
@@ -265,6 +268,7 @@ class Workspace:
             return {'ready': self.ready, 'data_directory': str(self.directory) if self.directory else None,
                     'message': self.message, 'port': self.server.server_port if self.server else None,
                     'saved_port': saved_port, 'port_source': self.port_source,
+                    'theme': load_theme(self.settings_file),
                     'port_warning': self.port_warning or settings_warning,
                     'restart_required': saved_port != self.requested_port}
 

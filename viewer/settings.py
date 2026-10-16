@@ -76,6 +76,18 @@ def save_port(settings_file, port):
     update_settings(settings_file, {'port': validate_port(port)})
 
 
+def load_theme(path):
+    if path is None: return 'mono'
+    try: value = read_settings(path).get('theme', 'mono')
+    except (OSError, ValueError, TypeError): return 'mono'
+    return value if value in ('mono', 'light', 'ocean') else 'mono'
+
+
+def save_theme(path, theme):
+    if theme not in ('mono', 'light', 'ocean'): raise ValueError('不支持的配色方案')
+    update_settings(path, {'theme': theme})
+
+
 def update_settings(settings_file, changes):
     if settings_file is None: raise ValueError('当前运行没有设置文件，无法保存偏好')
     with _write_lock:

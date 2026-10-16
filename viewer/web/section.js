@@ -1,4 +1,5 @@
 import * as THREE from './vendor/three.module.js';
+import {THEMES} from './themes.js';
 
 const sliceVertex=`uniform mat4 uWorldToVolume;out vec3 vTex;
 void main(){vec4 w=modelMatrix*vec4(position,1.0);vTex=(uWorldToVolume*w).xyz+.5;gl_Position=projectionMatrix*viewMatrix*w;}`;
@@ -9,15 +10,16 @@ float v=clamp((texture(uData,vTex).r-uWindow.x)/max(uWindow.y-uWindow.x,.00001),
 // The live pass shares the original mesh geometry without any decimation.
 const liveVertex=`uniform vec4 uPlane;varying float vDistance;
 void main(){vec4 world=modelMatrix*vec4(position,1.0);vDistance=dot(uPlane.xyz,world.xyz)+uPlane.w;gl_Position=projectionMatrix*viewMatrix*world;}`;
-const liveFragment=`varying float vDistance;
+const liveFragment=`varying float vDistance;uniform vec3 uLineColor;
 void main(){float slope=fwidth(vDistance);if(slope<1e-8)discard;
-float coverage=1.0-smoothstep(.5,1.5,abs(vDistance)/slope);if(coverage<.01)discard;gl_FragColor=vec4(.47,1.0,.88,coverage);}`;
+float coverage=1.0-smoothstep(.5,1.5,abs(vDistance)/slope);if(coverage<.01)discard;gl_FragColor=vec4(uLineColor,coverage);}`;
 
 export class SectionController {
   constructor(view,onStatus=()=>{}) {
     this.view=view;this.onStatus=onStatus;this.plane=new THREE.Plane();this.root=new THREE.Group();view.scene.add(this.root);
     view.renderer.localClippingEnabled=true;this.revision=0;
     this.options={enabled:false,azimuth:0,elevation:0,distance:0,flip:false,only:false,guide:true};
+    this.theme=THEMES.mono;
   }
   clear(){
     this.worker?.terminate();this.worker=null;this.workerReady=false;this.busy=false;this.pending=null;
@@ -38,12 +40,14 @@ export class SectionController {
       this.slice=new THREE.Mesh(new THREE.PlaneGeometry(1,1),material);this.root.add(this.slice);
     }else if(v.mesh){
       const material=new THREE.ShaderMaterial({side:THREE.DoubleSide,transparent:true,depthTest:false,depthWrite:false,
-        uniforms:{uPlane:{value:new THREE.Vector4()}},vertexShader:liveVertex,fragmentShader:liveFragment});
+        uniforms:{uPlane:{value:new THREE.Vector4()},uLineColor:{value:new THREE.Color(this.theme.axes[0])}},vertexShader:liveVertex,fragmentShader:liveFragment});
       this.live=new THREE.Mesh(v.mesh.geometry,material);this.live.renderOrder=10;v.group.add(this.live);
       this.exact=new THREE.LineSegments(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0x78ffe0,depthTest:false,depthWrite:false,transparent:true,opacity:.95}));
       this.exact.renderOrder=10;this.root.add(this.exact);
     }
+    this.setTheme(this.theme);
   }
+  setTheme(theme){this.theme=theme;for(const o of [this.guide,this.edge,this.exact])o?.material.color.set(theme.axes[0]);if(this.live)this.live.material.uniforms.uLineColor.value.set(theme.axes[0]);this.view.dirty=true;}
   limits(azimuth,elevation){
     const a=THREE.MathUtils.degToRad(azimuth),e=THREE.MathUtils.degToRad(elevation);
     const normal=new THREE.Vector3(Math.cos(e)*Math.cos(a),Math.cos(e)*Math.sin(a),Math.sin(e));

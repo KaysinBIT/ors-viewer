@@ -11,7 +11,7 @@ import urllib.request
 import uuid
 
 from viewer.server import make_server
-from viewer.settings import load_directory, load_port, save_directory, save_port, validate_port
+from viewer.settings import load_directory, load_port, save_directory, save_port, validate_port, load_theme, save_theme
 
 
 class PortTests(unittest.TestCase):
@@ -35,6 +35,27 @@ class PortTests(unittest.TestCase):
         for value in (0,1,65535,'8769'):self.assertEqual(validate_port(value),int(value))
         for value in (-1,65536,True,False,None,1.5,1.0,'1.0','abc',[]):
             with self.assertRaises(ValueError):validate_port(value)
+
+    def test_theme_persistence_preserves_port_and_data_directory(self):
+        self.assertEqual(load_theme(self.prefs),'mono');self.assertFalse(self.prefs.exists())
+        save_directory(self.prefs,self.root);save_port(self.prefs,8769)
+        for theme in ['light','ocean','mono']:
+            save_theme(self.prefs,theme);self.assertEqual(load_theme(self.prefs),theme)
+            self.assertEqual(load_port(self.prefs)[0],8769);self.assertEqual(load_directory(self.prefs)[0],self.root)
+        before=self.prefs.read_bytes()
+        with self.assertRaises(ValueError):save_theme(self.prefs,'invalid')
+        self.assertEqual(self.prefs.read_bytes(),before)
+
+    def test_theme_http_requires_authorization_and_updates_saved_theme(self):
+        server,url=self.server(0);threading.Thread(target=server.serve_forever,daemon=True).start();self.addCleanup(server.shutdown)
+        with urllib.request.urlopen(url) as response:html=response.read().decode()
+        token=re.search('name="viewer-token" content="([^"]+)"',html)[1]
+        route=url+'/api/settings/theme';headers={'Content-Type':'application/json','Origin':url,'X-Viewer-Token':token}
+        with urllib.request.urlopen(urllib.request.Request(route,data=b'{"theme":"light"}',headers=headers)) as response:
+            self.assertEqual(json.load(response)['theme'],'light')
+        with self.assertRaises(urllib.error.HTTPError) as error:
+            urllib.request.urlopen(urllib.request.Request(route,data=b'{"theme":"ocean"}'))
+        self.assertEqual(error.exception.code,403);error.exception.close();self.assertEqual(load_theme(self.prefs),'light')
 
     def test_save_merges_data_directory_and_unknown_preferences(self):
         self.prefs.write_text(json.dumps({'custom_flag':'keep'}),encoding='utf-8')

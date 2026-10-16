@@ -1,5 +1,6 @@
 import * as THREE from './vendor/three.module.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
+import {THEMES} from './themes.js';
 
 export function parsePacket(buffer) {
   const view = new DataView(buffer), length = view.getUint32(0, true);
@@ -42,6 +43,7 @@ uniform vec2 uWindow;
 uniform vec3 uTextureSize;
 uniform float uOpacity;
 uniform float uIso;
+uniform vec3 uTint;
 uniform int uMode;
 uniform int uSteps;
 uniform bool uClipEnabled;
@@ -78,13 +80,13 @@ void main() {
     if(uMode == 1 && v >= uIso) {
       vec3 n = gradient(p);
       float light = .25 + .55*abs(dot(n,normalize(vec3(.5,-.7,1.0)))) + .2*abs(dot(n,-ray));
-      fragColor = vec4(vec3(.69,.85,.88)*light, uOpacity);
+      fragColor = vec4(uTint*light, uOpacity);
       return;
     }
     maximum = max(maximum,v);
   }
   if(uMode == 1 || maximum < .025) discard;
-  vec3 color = mix(vec3(.13,.28,.39),vec3(.91,.96,1.0),pow(maximum,.72));
+  vec3 color = uTint*pow(maximum,.72);
   fragColor = vec4(color, pow(maximum,.55)*uOpacity);
 }`;
 const sliceVertex = `
@@ -121,6 +123,7 @@ void main() {
 export class SceneView {
   constructor(canvas, onError) {
     this.canvas = canvas;
+    this.theme=THEMES.mono;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.setClearColor(0, 0);
@@ -138,9 +141,9 @@ export class SceneView {
     this.controls.maxPolarAngle = Math.PI - .008;
     this.controls.autoRotateSpeed = 1;
     this.controls.addEventListener('change', () => this.dirty = true);
-    this.scene.add(new THREE.HemisphereLight(0xc8e9ff, 0x263647, 2.4));
-    const key = new THREE.DirectionalLight(0xfff3df, 3.2); key.position.set(3, -3, 5);this.scene.add(key);
-    const fill = new THREE.DirectionalLight(0x89cfed, 1.1);fill.position.set(-3, 2, 1);this.scene.add(fill);
+    this.scene.add(new THREE.HemisphereLight(0xffffff, 0x333333, 2.4));
+    const key = new THREE.DirectionalLight(0xffffff, 3.2); key.position.set(3, -3, 5);this.scene.add(key);
+    const fill = new THREE.DirectionalLight(0xffffff, 1.1);fill.position.set(-3, 2, 1);this.scene.add(fill);
     this.group = new THREE.Group();this.scene.add(this.group);
     this.grid = new THREE.GridHelper(5, 20, 0x395565, 0x233d4e);
     this.grid.rotation.x = Math.PI / 2;
@@ -168,6 +171,8 @@ export class SceneView {
         if(this.volume){this.volume.material.uniforms.uOrthographic.value=!!this.camera.isOrthographicCamera;this.camera.getWorldDirection(this.volume.material.uniforms.uCameraDirection.value);}
         this.renderer.render(this.scene, this.camera);this.dirty = false;
         if(this.volume)this.canvas.dataset.renderedSlices=this.volume.indices.join(',');
+        if(this.meshPlaneCoordinates)this.canvas.dataset.renderedMeshPlanes=this.meshPlaneCoordinates.join(',');
+        this.canvas.dataset.renderedTheme=this.theme.name;
         if(this.sectionRevision!==undefined){this.canvas.dataset.renderedSectionRevision=String(this.sectionRevision);this.canvas.dataset.renderedSectionDistance=String(this.sectionDistance);}
       }
     };animate();
@@ -184,6 +189,7 @@ export class SceneView {
     this.group.clear();this.group.position.set(0, 0, 0);this.group.scale.setScalar(1);
     if(this.box){this.scene.remove(this.box);this.box.geometry.dispose();this.box.material.dispose();this.box=null;}
     this.materials=[];this.mesh=null;this.volume=null;this.labelMaterials = new Map();this.dirty=true;
+    this.meshPlaneCoordinates=null;delete this.canvas.dataset.renderedMeshPlanes;
   }
 
   load(packet) {
@@ -222,7 +228,7 @@ export class SceneView {
     this.box = new THREE.Box3Helper(normalized, 0x719caf);this.box.visible = false;
     this.box.material.transparent = true;this.box.material.opacity=.5;this.scene.add(this.box);
     this.grid.position.z=normalized.min.z-.06;this.axes.position.z=normalized.min.z-.03;
-    this.fit();this.dirty=true;
+    this.setTheme(this.theme);this.fit();this.dirty=true;
   }
 
   addVolume(meta, arrays) {
@@ -233,7 +239,7 @@ export class SceneView {
     texture.unpackAlignment=1;texture.needsUpdate=true;
     const common = {uData:{value:texture},uWindow:{value:new THREE.Vector2(0,1)},uOpacity:{value:1},uClipEnabled:{value:false},uClipPlane:{value:new THREE.Vector4()}};
     const material = new THREE.ShaderMaterial({ glslVersion:THREE.GLSL3,side:THREE.BackSide,transparent:true,
-      uniforms:{...common,uTextureSize:{value:new THREE.Vector3(nx,ny,nz)},uMode:{value:0},uIso:{value:.5},uSteps:{value:200},uOrthographic:{value:false},uCameraDirection:{value:new THREE.Vector3(0,0,-1)}},
+      uniforms:{...common,uTextureSize:{value:new THREE.Vector3(nx,ny,nz)},uMode:{value:0},uTint:{value:new THREE.Color(this.theme.mesh)},uIso:{value:.5},uSteps:{value:200},uOrthographic:{value:false},uCameraDirection:{value:new THREE.Vector3(0,0,-1)}},
       vertexShader:volumeVertex,fragmentShader:volumeFragment,depthWrite:false });
     const matrix=new THREE.Matrix4().set(...meta.matrix.flat());
     const volume=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),material);
@@ -281,7 +287,7 @@ export class SceneView {
   colorScalar(key) {
     if(!this.mesh || this.packet.meta.kind!=='mesh')return;
     const geometry=this.mesh.geometry,material=this.materials[0];
-    if(key==='solid') {material.vertexColors=false;material.color.setHex(0xc4a273);geometry.deleteAttribute('color');}
+    if(key==='solid') {material.vertexColors=false;material.color.set(this.theme.mesh);geometry.deleteAttribute('color');}
     else {
       const info=this.packet.meta.scalars.find(s=>s.key===key),values=this.packet.arrays[key];if(!info||!values)return;
       const colors=new Float32Array(values.length*3);
@@ -329,6 +335,15 @@ export class SceneView {
     const uniforms=this.volume.planes[axis].material.uniforms;let texture=uniforms.uSliceData.value;
     if(!texture.isCanvasTexture){texture.dispose();texture=new THREE.CanvasTexture(canvas);texture.minFilter=texture.magFilter=THREE.NearestFilter;texture.generateMipmaps=false;uniforms.uSliceData.value=texture;}
     texture.image=canvas;texture.needsUpdate=true;uniforms.uExactSlice.value=true;this.dirty=true;
+  }
+  setTheme(theme){
+    this.theme=theme;this.renderer.setClearColor(theme.canvas,1);
+    if(this.mesh&&this.packet?.meta.kind==='mesh'&&!this.materials[0].vertexColors)this.materials[0].color.set(theme.mesh);
+    const colors=this.grid.geometry.attributes.color,c=new THREE.Color(theme.grid);
+    for(let i=0;i<colors.count;i++)colors.setXYZ(i,c.r,c.g,c.b);colors.needsUpdate=true;
+    this.axes.setColors(...theme.axes);if(this.box)this.box.material.color.set(theme.grid);
+    if(this.volume){this.volume.material.uniforms.uTint.value.set(theme.mesh);this.volume.outlines.forEach((p,i)=>p.material.color.set(theme.axes[i]));}
+    this.dirty=true;
   }
   screenshot(){this.renderer.render(this.scene,this.camera);return this.canvas.toDataURL('image/png');}
 }
