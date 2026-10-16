@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.1RC2
+
+- Make the 3D button exit the three-plane layout for both meshes and volumes, synchronizing the mode controls and hiding section panes.
+- Return volume MPR to 3D maximum-intensity projection; preserve section positions and per-pane zoom when reopening MPR.
+- Preserve the manual desktop startup workflow from 0.9.1RC.
+
 ## 0.9.1RC
 
 - Configure the port and data folder in the desktop launcher before starting the local service.

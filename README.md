@@ -27,7 +27,7 @@
 
 ## Windows 免安装版
 
-1. 从 Releases 下载 `ORSViewer-0.9.1RC-Windows-x64.zip`。
+1. 从 Releases 下载 `ORSViewer-0.9.1RC2-Windows-x64.zip`。
 2. 完整解压，保持 `ORSViewer.exe` 与 `_internal` 目录在一起。
 3. 双击 `ORSViewer.exe`。启动窗口不会自动打开网页。检查端口（0 为自动分配）和数据目录，点击“选择文件夹…”可修改目录。
 4. 点击“保存并启动服务”，显示本地网址后，再手动点击“打开三维界面”。
@@ -39,7 +39,7 @@
 
 运行后可点击“停止服务并修改”重新设置端口和目录，再启动服务并手动打开页面。停止服务或关闭启动窗口会中断未完成任务，已有输出保留。更换目录不会移动或删除旧数据。Windows 的 `%LOCALAPPDATA%/ORSViewer/settings.json` 保存目录、端口和主题偏好。
 
-0.9.1RC 为候选发布版，GitHub 标记为预发布；Python 包版本使用标准格式 `0.9.1rc1`。
+0.9.1RC2 为候选发布版，GitHub 标记为预发布；Python 包版本使用标准格式 `0.9.1rc2`。
 
 ## 从源码运行
 

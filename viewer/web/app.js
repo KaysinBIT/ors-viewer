@@ -307,7 +307,12 @@ $('section-distance-number').onchange=()=>updateSection($('section-distance-numb
 $('section-distance-number').oninput=()=>{const value=$('section-distance-number').value;if(value!==''&&Number.isFinite(Number(value)))updateSection(value);};
 $('section-center').onclick=()=>updateSection(0);
 $('section-face').onclick=()=>{state.faceSection=true;updateSection($('section-distance-number').value,true);section?.face(true);$('auto-rotate').setAttribute('aria-pressed','false');toast('已正对剖面 · 正交投影');};
-$('perspective-view').onclick=()=>{state.faceSection=false;scene?.perspective();$('auto-rotate').setAttribute('aria-pressed','false');};
+$('perspective-view').onclick=()=>{
+  state.faceSection=false;
+  if(state.object?.kind==='mesh'){state.meshMPR=false;updateMeshMode();}
+  else if(state.object?.kind==='volume'&&$('volume-mode').value==='mpr'){$('volume-mode').value='mip';updateVolumeMode();}
+  scene?.perspective();$('auto-rotate').setAttribute('aria-pressed','false');
+};
 $('viewport').addEventListener('pointerdown',()=>state.faceSection=false);
 $('fit-view').onclick=()=>{state.faceSection=false;scene?.fit();};document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{state.faceSection=false;scene?.view(b.dataset.view);});
 $('auto-rotate').onclick=()=>{state.faceSection=false;const value=$('auto-rotate').getAttribute('aria-pressed')!=='true';$('auto-rotate').setAttribute('aria-pressed',value);scene?.rotate(value);};
