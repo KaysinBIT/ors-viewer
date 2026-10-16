@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 (local test build)
+
+- Fill arbitrary-angle mesh and segmentation sections, preserving holes and rejecting unverified contours.
+- Add line/fill/outline choices and fill opacity; discard stale caps during movement without modifying source geometry.
+- Add per-plane maximize/restore buttons and Escape restoration for volume and mesh MPR.
+- Preserve pane position, zoom and pan; export the visible maximized plane in screenshots.
+- Update the offline manual. Browser visual acceptance is pending.
+
 ## 1.0.0
 
 - Stable release retaining the v0.9.1RC2 file formats, UI operations and numerical algorithms.

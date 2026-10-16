@@ -21,3 +21,11 @@
 body[data-mpr-kind=volume].mpr-active .inspector>.inspector-section:has(#quality){display:none}
 @media(max-width:1150px){#view-layout.mpr-layout{inset:150px 8px 72px;gap:6px}.mpr-heading{padding:0 5px}.mpr-heading span{font-size:9px}.mpr-active .view-toolbar{left:8px;gap:0}.mpr-active .view-toolbar button{padding:7px 5px}#mpr-readout{left:9px;bottom:44px}}
 @media(max-width:700px){.mpr-active .workspace{grid-template-columns:150px minmax(230px,1fr)}.mpr-active .sidebar{padding-left:7px;padding-right:7px}.mpr-active .object-icon{display:none}.mpr-active .view-toolbar button[data-view],.mpr-active #auto-rotate,.mpr-active .view-toolbar i{display:none}.mpr-heading{flex-wrap:wrap;align-content:center;gap:1px;height:36px;flex-basis:36px}.mpr-heading b,.mpr-heading span{width:100%;font-size:9px}.mpr-active .canvas-footer{display:none}#view-layout.mpr-layout{bottom:42px;top:145px}#mpr-readout{bottom:12px;font-size:10px}}
+
+.mpr-heading{position:relative}.mpr-heading span{flex:1;min-width:0}.mpr-heading b{flex-shrink:0}
+.mpr-heading .mpr-maximize{flex:0 0 auto;padding:3px 6px;font-size:10px;line-height:1.3;white-space:nowrap}
+#view-layout.mpr-layout.mpr-maximized .mpr-pane{display:none}
+/* Keep the hidden 3D viewport size stable so restoring does not refit its camera. */
+#view-layout.mpr-layout.mpr-maximized #canvas-wrap{visibility:hidden;pointer-events:none}
+#view-layout.mpr-layout.mpr-maximized .mpr-pane.is-maximized{display:flex;grid-column:1/-1;grid-row:1/-1}
+@media(max-width:700px){.mpr-heading{padding-right:60px}.mpr-heading .mpr-maximize{position:absolute;right:5px;top:7px}.mpr-heading span{flex:auto}.mpr-heading b{flex-shrink:1}}

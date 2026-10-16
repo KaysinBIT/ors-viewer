@@ -67,3 +67,54 @@ test('progressive slice requests refresh during motion but never leak results fr
   queue.reset();queue.submit(3);waiting[1].resolve(2);await new Promise(r=>setImmediate(r));assert.deepEqual(accepted,[1]);
   waiting[2].resolve(3);await new Promise(r=>setImmediate(r));assert.deepEqual(accepted,[1,3]);
 });
+
+function maximizedView(){
+  const classList=()=>({values:new Set(),toggle(name,on){on?this.values.add(name):this.values.delete(name);}});
+  const view={active:true,maximizedAxis:null,indices:[2,3,4],layout:{classList:classList(),dataset:{}},draw(){},scene:{dirty:false},
+    panes:[0,1,2].map(axis=>({axis,zoom:axis+1,focus:[axis,axis+1],panel:{classList:classList()},maximizeButton:{attributes:{},setAttribute(k,v){this.attributes[k]=v;}}})),
+    visiblePanes:MPRView.prototype.visiblePanes};
+  view.setMaximized=MPRView.prototype.setMaximized;return view;
+}
+test('each plane maximizes independently and restoring keeps source position, zoom and pan',()=>{
+  const view=maximizedView(),before=view.panes.map(p=>({zoom:p.zoom,focus:p.focus.slice()}));
+  for(const axis of [0,1,2]){
+    view.setMaximized(axis);assert.deepEqual(view.visiblePanes().map(p=>p.axis),[axis]);
+    assert.equal(view.panes[axis].maximizeButton.attributes['aria-pressed'],'true');
+    assert.ok(view.panes.filter(p=>p.panel.classList.values.has('is-maximized')).length===1);
+  }
+  view.setMaximized(null);assert.equal(view.visiblePanes().length,3);assert.equal(view.layout.dataset.maximizedAxis,undefined);
+  assert.deepEqual(view.indices,[2,3,4]);assert.deepEqual(view.panes.map(p=>({zoom:p.zoom,focus:p.focus})),before);
+  view.active=false;view.setMaximized(1);assert.equal(view.maximizedAxis,null);
+});
+test('maximized screenshot readiness only waits for its visible plane and the current readout',()=>{
+  const view=maximizedView();Object.assign(view,{kind:'volume',id:'object',time:1,readout:{dataset:{xyz:'2,3,4',time:'1',object:'object'}}});
+  Object.assign(view.panes[2],{packet:{},loadedKey:'latest',key:'latest'});view.setMaximized(2);
+  assert.equal(MPRView.prototype.ready.call(view),true);
+  view.readout.dataset.time='0';assert.equal(MPRView.prototype.ready.call(view),false);view.readout.dataset.time='1';
+  view.setMaximized(null);assert.equal(MPRView.prototype.ready.call(view),false);
+});
+test('maximized export draws only the visible canvas and skips the hidden 3D renderer',()=>{
+  const originalDocument=globalThis.document,view=maximizedView(),drawn=[];
+  const bounds={left:10,top:20,width:640,height:480};view.layout.getBoundingClientRect=()=>bounds;
+  Object.assign(view,{kind:'volume',theme:{header:'#000',text:'#fff',axes:['red','green','blue']},readout:{textContent:'position'}});
+  view.scene.screenshot=()=>{throw Error('Hidden 3D view must not be exported');};
+  for(const p of view.panes){p.panel.getBoundingClientRect=()=>bounds;p.canvas={axis:p.axis,getBoundingClientRect:()=>bounds};p.title={textContent:'plane'};p.status={textContent:'ready'};}
+  const context={scale(){},fillRect(){},save(){},beginPath(){},rect(){},clip(){},fillText(){},restore(){},drawImage(canvas){drawn.push(canvas.axis);}};
+  globalThis.document={createElement:()=>({getContext:()=>context,toDataURL:()=> 'data:image/png;base64,test'})};
+  try{view.setMaximized(1);assert.match(MPRView.prototype.screenshot.call(view),/^data:image\/png/);assert.deepEqual(drawn,[1]);}
+  finally{globalThis.document=originalDocument;}
+});
+test('leaving MPR restores the four-pane layout before the 3D view is shown',()=>{
+  const oldDocument=globalThis.document,view=maximizedView();
+  const body={dataset:{},classList:{toggle(){}}},heading={};
+  globalThis.document={body,getElementById:()=>heading};
+  Object.assign(view,{kind:'mesh',id:null,readout:{},probe:{reset(){}},scene:{camera:{isPerspectiveCamera:true,zoom:1,updateProjectionMatrix(){}}}});
+  for(const p of view.panes){p.canvas={setAttribute(){}};p.queue={reset(){}};}
+  try{
+    view.setMaximized(2);MPRView.prototype.setActive.call(view,false);
+    assert.equal(view.maximizedAxis,null);assert.equal(view.active,false);assert.equal(view.readout.hidden,true);
+    assert.equal(view.layout.classList.values.has('mpr-maximized'),false);
+    MPRView.prototype.setActive.call(view,true);
+    assert.equal(view.visiblePanes().length,3);assert.equal(view.maximizedAxis,null);assert.deepEqual(view.panes.map(p=>p.zoom),[1,2,3]);
+  }finally{globalThis.document=oldDocument;}
+});

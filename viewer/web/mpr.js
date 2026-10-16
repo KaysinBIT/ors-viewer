@@ -8,7 +8,7 @@ import {clampZoom,zoomImageTransform,zoomMeshTransform,panImageFocus,panMeshFocu
 export class MPRView {
   constructor(layout, scene, onPosition, onRange=()=>{}) {
     this.layout=layout;this.scene=scene;this.onPosition=onPosition;this.indices=[0,0,0];this.panes=[];
-    this.low=0;this.high=1;this.generation=0;this.kind='volume';this.theme=THEMES.mono;this.fillMode='both';this.fillOpacity=.35;
+    this.low=0;this.high=1;this.generation=0;this.kind='volume';this.theme=THEMES.mono;this.fillMode='both';this.fillOpacity=.35;this.maximizedAxis=null;
     if(scene)this.meshSections=new MeshSections(scene,data=>{
       this.meshResult=data;
       for(const p of this.panes){
@@ -24,7 +24,11 @@ export class MPRView {
       panel.className='mpr-pane mpr-axis-'+axis;panel.style.setProperty('--plane-color',this.theme.axes[axis]);
       const header=document.createElement('div');header.className='mpr-heading';
       const title=document.createElement('b');title.textContent=`${AXES[axis]} · ${AXES[u]}${AXES[v]} 切面`;
-      const status=document.createElement('span');header.append(title,status);
+      const status=document.createElement('span');
+      const maximizeButton=document.createElement('button');maximizeButton.type='button';maximizeButton.className='mpr-maximize';
+      maximizeButton.textContent='最大化';maximizeButton.title='最大化此切面';maximizeButton.setAttribute('aria-label',`${AXES[axis]} 切面最大化`);maximizeButton.setAttribute('aria-pressed','false');
+      maximizeButton.onclick=()=>this.setMaximized(this.maximizedAxis===axis?null:axis);
+      header.append(title,status,maximizeButton);
       const body=document.createElement('div');body.className='mpr-image';
       const canvas=document.createElement('canvas');canvas.tabIndex=0;canvas.setAttribute('aria-label',`${AXES[axis]} 原始切面，滚轮翻片，点击或拖动十字定位`);
       const hint=document.createElement('span');hint.className='mpr-hint';hint.textContent=`${AXES[u]} →　${AXES[v]} ↑`;
@@ -36,7 +40,7 @@ export class MPRView {
       const resetButton=document.createElement('button');resetButton.textContent='适应';resetButton.title='恢复 100% 并显示完整切面';resetButton.setAttribute('aria-label',`${AXES[axis]} 切面恢复适应窗口`);
       zoomBar.append(zoomLabel,zoomInput,zoomOutput,focusButton,resetButton);
       body.append(canvas,hint);panel.append(header,body,zoomBar);layout.append(panel);
-      const p={axis,panel,header,status,body,canvas,zoomBar,zoomInput,zoomOutput,zoom:1,focus:null,image:document.createElement('canvas'),key:null};this.panes[axis]=p;
+      const p={axis,panel,header,title,status,maximizeButton,body,canvas,zoomBar,zoomInput,zoomOutput,zoom:1,focus:null,image:document.createElement('canvas'),key:null};this.panes[axis]=p;
       zoomInput.oninput=()=>{p.zoom=clampZoom(Number(zoomInput.value)/100);zoomOutput.textContent=Math.round(p.zoom*100)+'%';this.draw(p);};
       focusButton.onclick=()=>{if(!this.id)return;p.focus=this.crosshairFocus(p);this.draw(p);};
       resetButton.onclick=()=>{this.resetPane(p);this.draw(p);};
@@ -87,6 +91,11 @@ export class MPRView {
       this.readout.dataset.xyz=result.xyz.join(',');this.readout.dataset.value=result.value;
       this.readout.dataset.time=String(result.time_step);this.readout.dataset.object=job.id;
     },error=>{this.readout.textContent=error.message;});
+    window.addEventListener('keydown',event=>{
+      if(event.key==='Escape'&&this.maximizedAxis!==null&&!document.querySelector('dialog[open]')){
+        event.preventDefault();this.setMaximized(null);
+      }
+    });
   }
   clear() {
     this.setActive(false);this.id=null;this.probe.reset();this.probeKey=null;
@@ -112,7 +121,24 @@ export class MPRView {
   clamp(axis,value){return this.kind==='mesh'?Math.max(this.meshSections.bounds[0][axis],Math.min(this.meshSections.bounds[1][axis],value)):clampIndex(value,this.shape[axis]);}
   step(axis){return this.kind==='mesh'?(this.meshSections.bounds[1][axis]-this.meshSections.bounds[0][axis])/200:1;}
   resetPane(p){p.zoom=1;p.focus=null;p.drag=null;if(p.zoomInput)p.zoomInput.value=100;if(p.zoomOutput)p.zoomOutput.textContent='100%';}
-  resetViews(){for(const p of this.panes)this.resetPane(p);}
+  resetViews(){this.setMaximized?.(null);for(const p of this.panes)this.resetPane(p);}
+  setMaximized(axis=null){
+    if(axis!==null&&(!this.active||!Number.isInteger(axis)||axis<0||axis>2))return;
+    this.maximizedAxis=axis;
+    this.layout.classList.toggle('mpr-maximized',axis!==null);
+    if(axis===null)delete this.layout.dataset.maximizedAxis;
+    else this.layout.dataset.maximizedAxis=AXES[axis];
+    for(const pane of this.panes){
+      const selected=pane.axis===axis;
+      pane.panel.classList.toggle('is-maximized',selected);
+      pane.maximizeButton.textContent=selected?'还原':'最大化';
+      pane.maximizeButton.title=selected?'还原四窗口布局 (Esc)':'最大化此切面';
+      pane.maximizeButton.setAttribute('aria-label',`${AXES[pane.axis]} 切面${selected?'还原':'最大化'}`);
+      pane.maximizeButton.setAttribute('aria-pressed',String(selected));
+      this.draw(pane);
+    }
+    if(this.scene)this.scene.dirty=true;
+  }
   recordFrame(p,position){
     const frames=p.frames??=[];if(frames.at(-1)?.position===position)return;
     const duringDrag=Boolean(document.querySelector('#mesh-x:active,#mesh-y:active,#mesh-z:active,#slice-x:active,#slice-y:active,#slice-z:active,.mpr-image canvas:active'));
@@ -141,6 +167,7 @@ export class MPRView {
   }
   setTheme(theme){this.theme=theme;this.meshSections?.setTheme(theme);for(const p of this.panes){p.panel.style.setProperty('--plane-color',theme.axes[p.axis]);this.draw(p);}}
   setActive(active) {
+    if(!active)this.setMaximized(null);
     this.active=active;document.body.classList.toggle('mpr-active',active);document.body.dataset.mprKind=this.kind;this.layout.classList.toggle('mpr-layout',active);
     this.meshSections?.setActive(active&&this.kind==='mesh');
     for(const p of this.panes)p.canvas.setAttribute('aria-label',`${AXES[p.axis]} ${this.kind==='mesh'?'网格截面':'原始切面'}，滚轮移动，左键定位，右键平移`);
@@ -222,16 +249,23 @@ export class MPRView {
   }
   screenshot() {
     if(!this.active)return this.scene.screenshot();
-    this.scene.screenshot();const rect=this.layout.getBoundingClientRect(),canvas=document.createElement('canvas');
+    if(this.maximizedAxis===null)this.scene.screenshot();
+    const rect=this.layout.getBoundingClientRect(),canvas=document.createElement('canvas');
     canvas.width=Math.round(rect.width*2);canvas.height=Math.round(rect.height*2)+50;
     const ctx=canvas.getContext('2d');ctx.scale(2,2);ctx.fillStyle=this.theme.header;ctx.fillRect(0,0,rect.width,rect.height+25);
     const draw=(element,source,title,color,footer='')=>{const r=element.getBoundingClientRect(),x=r.left-rect.left,y=r.top-rect.top,im=source.getBoundingClientRect();
+      if(!r.width||!r.height||!im.width||!im.height)return;
       ctx.fillStyle=this.theme.header;ctx.fillRect(x,y,r.width,r.height);ctx.fillStyle=color;ctx.font='12px sans-serif';ctx.save();ctx.beginPath();ctx.rect(x+5,y,r.width-10,28);ctx.clip();ctx.fillText(title,x+8,y+18);ctx.restore();
       ctx.drawImage(source,im.left-rect.left,im.top-rect.top,im.width,im.height);if(footer){ctx.fillStyle=this.theme.text;ctx.font='11px sans-serif';ctx.fillText(footer,x+8,y+r.height-10);}};
-    for(const p of this.panes)draw(p.panel,p.canvas,p.header.textContent,this.theme.axes[p.axis],`缩放 ${Math.round(p.zoom*100)}%${this.kind==='mesh'?' · '+({line:'仅截线',fill:'填充',both:'填充 + 轮廓'})[this.fillMode]:''}`);
-    draw(document.getElementById('canvas-wrap'),this.scene.canvas,'3D · 三切面空间定位',this.theme.text);
+    for(const p of this.visiblePanes())draw(p.panel,p.canvas,p.title.textContent+' '+p.status.textContent,this.theme.axes[p.axis],`缩放 ${Math.round(p.zoom*100)}%${this.kind==='mesh'?' · '+({line:'仅截线',fill:'填充',both:'填充 + 轮廓'})[this.fillMode]:''}`);
+    if(this.maximizedAxis===null)draw(document.getElementById('canvas-wrap'),this.scene.canvas,'3D · 三切面空间定位',this.theme.text);
     ctx.fillStyle=this.theme.text;ctx.font='12px sans-serif';ctx.fillText(this.readout.textContent,8,rect.height+18);
     return canvas.toDataURL('image/png');
   }
-  ready(){if(this.kind==='mesh')return Boolean(this.meshResult)&&this.meshSections.resultRevision===this.meshSections.revision&&(this.fillMode==='line'||!this.meshResult.fills?.some(f=>f.status==='pending'));return this.panes.every(p=>p.packet&&p.loadedKey===p.key)&&this.readout.dataset.xyz===this.indices.join(',')&&this.readout.dataset.time===String(this.time)&&this.readout.dataset.object===this.id;}
+  visiblePanes(){return this.maximizedAxis===null?this.panes:[this.panes[this.maximizedAxis]];}
+  ready(){
+    const panes=this.visiblePanes();
+    if(this.kind==='mesh')return Boolean(this.meshResult)&&this.meshSections.resultRevision===this.meshSections.revision&&(this.fillMode==='line'||!panes.some(p=>this.meshResult.fills?.[p.axis]?.status==='pending'));
+    return panes.every(p=>p.packet&&p.loadedKey===p.key)&&this.readout.dataset.xyz===this.indices.join(',')&&this.readout.dataset.time===String(this.time)&&this.readout.dataset.object===this.id;
+  }
 }

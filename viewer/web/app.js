@@ -21,9 +21,12 @@ function el(tag,text,cls){const node=document.createElement(tag);if(text!=null)n
 function showError(message){$('scene-error').textContent=message;$('scene-error').hidden=false;}
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(state.toastTimer);state.toastTimer=setTimeout(()=>$('toast').hidden=true,TOAST_DURATION_MS);}
 let scene,section,rendererError;
-try{scene=new SceneView($('viewport'),showError);section=new SectionController(scene,(status,count)=>{
+try{scene=new SceneView($('viewport'),showError);section=new SectionController(scene,(status,count,fill)=>{
   if(state.object?.kind==='volume')return;
-  $('section-note').textContent=status==='exact'?`精确截线 ${fmt(count)} 段；剖切实时更新，不自动封口。`:status==='live'?'实时剖切与截线显示；后台精确截线暂不可用。':'剖切与截线实时显示；正在后台更新精确截线。';
+  let message=status==='exact'?`精确截线 ${fmt(count)} 段。`:status==='live'?'实时截线显示；后台精确计算暂不可用。':'剖切与截线实时显示；正在后台更新。';
+  if(fill?.status==='filled')message+=` 截面已填充：${fill.loops} 个闭环，${fill.holes} 个孔洞。`;
+  else if(fill?.message)message+=' '+fill.message;
+  $('section-note').textContent=message;
 });}catch(error){rendererError='当前浏览器无法启用 WebGL 2 三维显示：'+error.message;showError(rendererError);}
 const mpr=new MPRView($('view-layout'),scene,setSlicePosition,extendWindowRange);
 const viewControls=createViewControls({state,scene,mpr,element:$,updateSection});
@@ -73,6 +76,7 @@ function resetObjectView(object){
   state.object=object;state.selectedLabel=0;state.tableStart=0;state.meta=null;state.preview=null;
   if(scene?.camera.isOrthographicCamera)scene.perspective();
   $('retention').value=100;$('retention-value').textContent='100%';$('section-enabled').checked=false;$('section-distance').value=0;$('section-distance-number').value=0;$('section-fields').hidden=true;
+  $('section-fill-controls').hidden=object.kind==='volume';
   $('section-mode').value='cut';$('section-flip').checked=false;
   $('section-azimuth').value=0;$('section-elevation').value=0;state.faceSection=false;
   $('retention-field').hidden=object.kind==='volume';$('quality').closest('label').hidden=object.kind==='mesh';
@@ -365,6 +369,14 @@ document.querySelectorAll('#type-filters button').forEach(button=>button.onclick
 $('quality').onchange=loadPreview;$('time-step').onchange=loadPreview;
 $('retention').oninput=()=>{$('retention-value').textContent=$('retention').value+'%';};$('retention').onchange=loadPreview;
 $('download-preview').onclick=exportPreview;
+function updateSectionDisplay(){
+  const mode=$('section-fill-mode').value,opacity=Number($('section-fill-opacity').value);
+  $('section-fill-opacity-field').hidden=mode==='line';$('section-fill-opacity-value').textContent=opacity+'%';
+  section?.setDisplay(mode,opacity/PERCENT_SCALE);
+}
+$('section-fill-mode').onchange=updateSectionDisplay;
+$('section-fill-opacity').oninput=updateSectionDisplay;
+updateSectionDisplay();
 $('section-enabled').onchange=()=>{state.faceSection=false;updateSection();};
 for(const id of ['section-azimuth','section-elevation'])$(id).oninput=()=>updateSection();
 for(const id of ['section-flip','section-guide','section-mode'])$(id).onchange=()=>updateSection();
@@ -377,7 +389,7 @@ $('perspective-view').onclick=viewControls.show3D;
 $('viewport').addEventListener('pointerdown',()=>state.faceSection=false);
 $('fit-view').onclick=()=>{state.faceSection=false;scene?.fit();};document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>{state.faceSection=false;scene?.view(b.dataset.view);});
 $('auto-rotate').onclick=()=>{state.faceSection=false;const value=$('auto-rotate').getAttribute('aria-pressed')!=='true';$('auto-rotate').setAttribute('aria-pressed',value);scene?.rotate(value);};
-$('screenshot').onclick=()=>{if(!scene)return;if(mpr.active&&!mpr.ready())return toast('当前切面数据正在更新，请稍后截图');const a=$('save-screenshot');a.href=mpr.screenshot();a.download='ORS_'+(mpr.active?'MPR':'3D')+'_'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';$('screenshot-image').src=a.href;$('screenshot-dialog').showModal();};
+$('screenshot').onclick=()=>{if(!scene)return;if(mpr.active&&!mpr.ready())return toast('当前切面数据正在更新，请稍后截图');if(!mpr.active&&section&&!section.ready())return toast('当前剖面填充正在更新，请稍后截图');const a=$('save-screenshot');a.href=mpr.screenshot();a.download='ORS_'+(mpr.active?'MPR':'3D')+'_'+new Date().toISOString().replace(/[:.]/g,'-')+'.png';$('screenshot-image').src=a.href;$('screenshot-dialog').showModal();};
 $('close-screenshot').onclick=()=>{$('screenshot-dialog').close();$('screenshot-image').removeAttribute('src');$('save-screenshot').removeAttribute('href');};
 $('mpr-toggle').onclick=viewControls.toggleMPR;
 AXIS_KEYS.forEach((axis,i)=>{

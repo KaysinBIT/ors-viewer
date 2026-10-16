@@ -19,13 +19,14 @@ export class SectionController {
     this.view=view;this.onStatus=onStatus;this.plane=new THREE.Plane();this.root=new THREE.Group();view.scene.add(this.root);
     view.renderer.localClippingEnabled=true;this.revision=0;
     this.options={enabled:false,azimuth:0,elevation:0,distance:0,flip:false,only:false,guide:true};
-    this.theme=THEMES.mono;
+    this.theme=THEMES.mono;this.fillMode='both';this.fillOpacity=.35;
   }
   clear(){
     this.worker?.terminate();this.worker=null;this.workerReady=false;this.busy=false;this.pending=null;
     if(this.live){this.view.group.remove(this.live);this.live.material.dispose();this.live=null;}
     this.root.traverse(o=>{o.geometry?.dispose();o.material?.dispose();});this.root.clear();
-    this.guide=null;this.edge=null;this.slice=null;this.exact=null;this.segmentCount=0;this.workerFailed=false;
+    this.guide=null;this.edge=null;this.slice=null;this.exact=null;this.cap=null;this.fill=null;this.resultLines=null;this.resultRevision=-1;
+    this.packet=null;this.segmentCount=0;this.workerFailed=false;
   }
   ensureResources(){
     const v=this.view;
@@ -44,10 +45,40 @@ export class SectionController {
       this.live=new THREE.Mesh(v.mesh.geometry,material);this.live.renderOrder=10;v.group.add(this.live);
       this.exact=new THREE.LineSegments(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0x78ffe0,depthTest:false,depthWrite:false,transparent:true,opacity:.95}));
       this.exact.renderOrder=10;this.root.add(this.exact);
+      this.cap=new THREE.Mesh(new THREE.BufferGeometry(),new THREE.MeshBasicMaterial({side:THREE.DoubleSide,transparent:true,opacity:this.fillOpacity,depthWrite:false,polygonOffset:true,polygonOffsetFactor:-1,polygonOffsetUnits:-1}));
+      this.cap.renderOrder=9;this.cap.visible=false;this.cap.frustumCulled=false;this.root.add(this.cap);
     }
     this.setTheme(this.theme);
   }
-  setTheme(theme){this.theme=theme;for(const o of [this.guide,this.edge,this.exact])o?.material.color.set(theme.axes[0]);if(this.live)this.live.material.uniforms.uLineColor.value.set(theme.axes[0]);this.view.dirty=true;}
+  setTheme(theme){this.theme=theme;for(const o of [this.guide,this.edge,this.exact,this.cap])o?.material.color.set(theme.axes[0]);if(this.live)this.live.material.uniforms.uLineColor.value.set(theme.axes[0]);this.view.dirty=true;}
+  setDisplay(mode,opacity){
+    this.fillMode=['line','fill','both'].includes(mode)?mode:'both';this.fillOpacity=Math.max(.1,Math.min(1,opacity));
+    this.applyDisplay();if(this.options.enabled&&this.exact)this.reportStatus();
+  }
+  applyDisplay(){
+    if(!this.exact)return;
+    const current=this.options.enabled&&this.resultRevision===this.revision;
+    const filled=current&&this.fill?.status==='filled'&&this.fillMode!=='line';
+    this.cap.visible=filled;this.cap.material.opacity=this.fillOpacity;
+    this.live.visible=this.options.enabled&&!current;
+    this.exact.visible=current&&(!filled||this.fillMode!=='fill');
+    const lines=filled?this.fill.boundary:this.resultLines;
+    if(current&&lines&&this.exact.geometry.attributes.position?.array!==lines){
+      this.exact.geometry.dispose();this.exact.geometry=new THREE.BufferGeometry();
+      this.exact.geometry.setAttribute('position',new THREE.BufferAttribute(lines,3));
+    }
+    this.view.canvas.dataset.sectionFillStatus=this.fill?.status||'unavailable';
+    this.view.canvas.dataset.sectionFillMode=this.fillMode;
+    this.view.dirty=true;
+  }
+  reportStatus(){
+    const status=this.workerFailed?'live':this.resultRevision===this.revision?'exact':'updating';
+    this.onStatus(status,this.segmentCount,this.fillMode==='line'?null:this.fill);
+  }
+  ready(){
+    if(!this.options.enabled||this.view.volume||this.fillMode==='line'||this.workerFailed)return true;
+    return this.resultRevision===this.revision&&Boolean(this.fill)&&this.fill.status!=='pending';
+  }
   limits(azimuth,elevation){
     const a=THREE.MathUtils.degToRad(azimuth),e=THREE.MathUtils.degToRad(elevation);
     const normal=new THREE.Vector3(Math.cos(e)*Math.cos(a),Math.cos(e)*Math.sin(a),Math.sin(e));
@@ -78,12 +109,14 @@ export class SectionController {
       this.slice.visible=o.enabled;this.slice.material.uniforms.uWorldToVolume.value.copy(inverse);this.place(this.slice,point,normal);
     }
     if(this.live){
-      this.live.visible=o.enabled;this.exact.visible=false;
+      this.live.visible=o.enabled;this.exact.visible=false;this.cap.visible=false;this.fill=null;
+      v.canvas.dataset.sectionFillStatus=o.enabled?'pending':'disabled';
+      v.canvas.dataset.sectionFillMode=this.fillMode;
       this.live.material.uniforms.uPlane.value.set(normal.x,normal.y,normal.z,-normal.dot(point));
       if(o.enabled){
         const c=v.bounds.getCenter(new THREE.Vector3());
         this.pending={type:'section',revision:this.revision,normal:normal.toArray(),constant:-normal.dot(c)-o.distance,
-          center:c.toArray(),scale,epsilon:Math.max(v.bounds.getSize(new THREE.Vector3()).length()*1e-10,1e-20)};
+          point:point.toArray(),center:c.toArray(),scale,epsilon:Math.max(v.bounds.getSize(new THREE.Vector3()).length()*1e-10,1e-20)};
         this.startWorker();this.dispatch();this.onStatus(this.workerFailed?'live':'updating');
       }else this.pending=null;
     }
@@ -95,20 +128,31 @@ export class SectionController {
     try{
       const worker=this.worker=new Worker(new URL('./section-worker.js',import.meta.url),{type:'module'});
       worker.onmessage=({data})=>{
-        if(this.packet!==packet)return;
+        if(this.packet!==packet||this.worker!==worker)return;
         if(data.type==='ready')this.workerReady=true;
         else if(data.type==='section'){
           this.busy=false;
           if(data.revision===this.revision&&this.options.enabled){
-            this.exact.geometry.dispose();this.exact.geometry=new THREE.BufferGeometry();
-            this.exact.geometry.setAttribute('position',new THREE.BufferAttribute(data.lines,3));
-            this.segmentCount=data.lines.length/6;this.exact.visible=true;this.live.visible=false;
-            this.view.dirty=true;this.onStatus('exact',this.segmentCount);
+            this.resultRevision=data.revision;this.resultLines=data.lines;this.segmentCount=data.lines.length/6;
+            this.fill=data.fillPending?{status:'pending',message:'截面填充后台计算中'}:null;
+            this.applyDisplay();this.reportStatus();
           }
+        }else if(data.type==='fill'&&data.revision===this.revision&&this.options.enabled){
+          this.fill=data.fill;this.cap.geometry.dispose();this.cap.geometry=new THREE.BufferGeometry();
+          if(data.fill.status==='filled'){
+            this.cap.geometry.setAttribute('position',new THREE.BufferAttribute(data.fill.positions,3));
+            this.cap.geometry.setIndex(new THREE.BufferAttribute(data.fill.indices,1));
+          }
+          this.applyDisplay();this.reportStatus();
+        }else if(data.type==='fill-error'&&data.revision===this.revision&&this.options.enabled){
+          this.fill={status:'invalid',message:'填充计算失败，保留截线'};this.applyDisplay();this.reportStatus();
         }
         this.dispatch();
       };
-      worker.onerror=()=>{this.workerFailed=true;worker.terminate();this.worker=null;this.busy=false;this.onStatus('live');};
+      worker.onerror=()=>{
+        if(this.worker!==worker||this.packet!==packet)return;
+        this.workerFailed=true;worker.terminate();this.worker=null;this.busy=false;this.cap.visible=false;this.fill=null;this.onStatus('live');
+      };
       // Transfer copies once per object; original rendering arrays stay intact.
       const positions=new Float32Array(packet.arrays.positions),indices=new Uint32Array(packet.arrays.indices);
       worker.postMessage({type:'mesh',positions,indices},[positions.buffer,indices.buffer]);

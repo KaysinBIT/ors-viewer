@@ -1,5 +1,7 @@
 import {ShapeUtils,Vector2} from './vendor/three.core.js';
 
+export const DEFAULT_FILL_LIMITS=Object.freeze({maxSegments:200000,maxWork:2000000});
+
 const axes=[[1,2],[0,2],[0,1]];
 const empty=(status,message)=>({status,message,positions:new Float32Array(),indices:new Uint32Array(),offsets:new Uint32Array(),boundary:new Float32Array(),area:0,loops:0,holes:0});
 const cross=(a,b,c)=>(b[0]-a[0])*(c[1]-a[1])-(b[1]-a[1])*(c[0]-a[0]);
@@ -22,7 +24,7 @@ function intersects(a,b,c,d,tol){
 /** Validate local section contours; never invent edges across an open boundary. */
 export function contourFill(lines,axis,coplanarFlags=new Uint8Array(),limits={}){
   if(!lines.length)return empty('empty','此处无截线');
-  const maxSegments=limits.maxSegments??200000,maxWork=limits.maxWork??2000000;
+  const maxSegments=limits.maxSegments??DEFAULT_FILL_LIMITS.maxSegments,maxWork=limits.maxWork??DEFAULT_FILL_LIMITS.maxWork;
   if(lines.length/6>maxSegments)return empty('complex','轮廓过于复杂，保留完整截线');
   const [u,v]=axes[axis];let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
   for(let i=0;i<lines.length;i+=3){const x=lines[i+u],y=lines[i+v];if(!Number.isFinite(x)||!Number.isFinite(y))return empty('invalid','轮廓坐标无效');minX=Math.min(minX,x);maxX=Math.max(maxX,x);minY=Math.min(minY,y);maxY=Math.max(maxY,y);}
