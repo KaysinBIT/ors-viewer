@@ -69,13 +69,13 @@ export class MPRView {
   }
   clear() {
     this.setActive(false);this.id=null;this.probe.reset();this.probeKey=null;
-    this.meshSections?.clear();this.meshResult=null;
+    this.meshSections?.clear();this.meshResult=null;this.meshPacket=null;
     for(const p of this.panes){p.queue.reset();p.packet=null;p.key=null;p.loadedKey=null;delete p.canvas.dataset.loadedIndex;}
   }
   source(id, meta, time, indices) {
     // Reloads of the same source keep navigation; time changes invalidate planes.
     this.kind='volume';this.id=id;this.shape=meta.grid.shape_tzyx.slice(1).reverse();this.time=time;this.indices=indices.slice();
-    this.meshSections?.clear();
+    this.meshSections?.clear();this.meshPacket=null;
     for(const p of this.panes){p.queue.reset();p.packet=null;p.key=null;p.loadedKey=null;}
     this.probe.reset();this.probeKey=null;
     if(this.active)this.position(indices);

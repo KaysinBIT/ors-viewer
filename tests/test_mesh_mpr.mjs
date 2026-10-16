@@ -5,9 +5,18 @@ import {meshSections,meshPlaneTransform,meshToScreen,screenToMesh} from '../view
 import {MeshSections} from '../viewer/web/mesh-sections.js';
 import {SceneView} from '../viewer/web/scene.js';
 import {THEMES,themeFor} from '../viewer/web/themes.js';
+import {MPRView} from '../viewer/web/mpr.js';
 
 const vertices=new Float32Array([0,0,0,1,0,0,0,1,0,0,0,1]);
 const indices=new Uint32Array([0,2,1,0,1,3,1,2,3,2,0,3]);
+test('leaving a mesh releases retained geometry packets before a volume is loaded',()=>{
+  const view={meshPacket:{arrays:{positions:vertices,indices}},meshResult:{lines:[]},id:'old',
+    setActive(){},probe:{reset(){}},meshSections:{clear(){}},panes:[{queue:{reset(){}},canvas:{dataset:{loadedIndex:'0'}}}]};
+  MPRView.prototype.clear.call(view);assert.equal(view.meshPacket,null);assert.equal(view.meshResult,null);assert.equal(view.id,null);
+  view.meshPacket={arrays:{positions:vertices,indices}};
+  MPRView.prototype.source.call(view,'volume',{grid:{shape_tzyx:[1,2,3,4]}},0,[1,1,1]);
+  assert.equal(view.meshPacket,null);assert.equal(view.kind,'volume');assert.equal(indices.length,12);
+});
 test('three mesh sections share the requested coordinates without changing original triangles',()=>{
   const before=vertices.slice(),faces=indices.slice(),cuts=[.2,.3,.4],center=[.5,.5,.5],scale=2;
   const result=meshSections(vertices,indices,cuts,center,scale,1e-10);

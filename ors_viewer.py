@@ -8,7 +8,7 @@ import threading
 import webbrowser
 from viewer.settings import settings_path, load_directory, validate_directory, validate_port
 
-VERSION = '0.8.0'
+VERSION = '0.8.1'
 
 
 def configure_logs(directory):

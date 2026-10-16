@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.1
+
+- Release retained mesh packet references when leaving mesh views or switching to volume data, reducing memory use after viewing large meshes.
+- Include all mesh three-plane and unified theme features from 0.8.0.
+
 ## 0.8.0
 
 - Extend linked three-plane views to STL and ORS triangle meshes with exact plane intersections of the displayed geometry.

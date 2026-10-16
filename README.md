@@ -25,7 +25,7 @@
 
 ## Windows 免安装版
 
-1. 从 Releases 下载 `ORSViewer-0.8.0-Windows-x64.zip`。
+1. 从 Releases 下载 `ORSViewer-0.8.1-Windows-x64.zip`。
 2. 完整解压，保持 `ORSViewer.exe` 与 `_internal` 目录在一起。
 3. 双击 `ORSViewer.exe`。首次使用先点击“选择数据目录”，选择或新建专用文件夹，再点击“保存并开始”。
 4. 在三维界面点击“导入文件”，使用“本地文件路径”旁的“选择文件”按钮选取文件，无需手动输入路径。
