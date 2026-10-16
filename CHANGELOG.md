@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.1RC
+
+- Configure the port and data folder in the desktop launcher before starting the local service.
+- Open the 3D page only when the user clicks the browser button; startup never opens it automatically.
+- Default the first data folder to the executable directory and retain saved selections.
+- Add folder selection, explicit stop/reconfigure controls, validation messages and startup guidance.
+- Keep command-line overrides temporary and preserve loopback-only listening.
+- Publish as a release candidate (Python package version 0.9.1rc1) and update offline manuals.
+
 ## 0.9.0
 
 - Add independent 25–800% zoom sliders, right-button panning, crosshair centering and fit controls to all three 2D planes.
