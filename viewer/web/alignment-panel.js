@@ -1,12 +1,17 @@
-import {IDENTITY,poseMatrix,transformPoint,anglesFromRotation,rotationFromAngles,faceRotation,pointsRotation,dot} from './alignment-math.js';
+import {IDENTITY,poseMatrix,transformPoint,anglesFromRotation,rotationFromAngles,faceAlignedRotation,pointsRotation,originalPose} from './alignment-math.js';
 
 export class AlignmentPanel {
   constructor({host,scene,mpr,post,onChange,onPickMode,notify}){
     Object.assign(this,{scene,mpr,post,onChange,onPickMode,notify});this.points=[];this.mode=null;this.generation=0;
     this.panel=document.createElement('section');this.panel.className='inspector-section alignment-panel';this.panel.hidden=true;
     this.panel.innerHTML=`<div class="control-heading">整个数据集 · 初始姿态</div>
-      <p class="note">旋转数据，三切面 XYZ 轴固定。网格、CT、分割共用数据集中心，保持相对位置。</p>
+      <p class="note">旋转／镜像整个数据集，三切面 XYZ 轴固定。网格、CT、分割共用数据集中心，保持相对位置。</p>
       <div class="alignment-angles"></div>
+      <div class="control-heading">镜像翻转</div><div class="check-row alignment-mirrors">
+        <label class="check"><input id="mirror-x" type="checkbox" aria-label="整个数据集 X 镜像">X 镜像</label>
+        <label class="check"><input id="mirror-y" type="checkbox" aria-label="整个数据集 Y 镜像">Y 镜像</label>
+        <label class="check"><input id="mirror-z" type="checkbox" aria-label="整个数据集 Z 镜像">Z 镜像</label>
+      </div><p class="note">先旋转，再关于经过数据集中心的固定 XYZ 平面镜像。可组合开关；取消镜像保留旋转。</p>
       <label class="field"><span>参考面旋转到</span><select aria-label="自动对齐目标平面"><option value="2">XY 平面（Z 切面）</option><option value="1">XZ 平面（Y 切面）</option><option value="0">YZ 平面（X 切面）</option></select></label>
       <div class="alignment-buttons"><button data-action="face">选择参考面</button><button data-action="points">选择三个点</button><button data-action="cancel" hidden>取消选取</button></div>
       <p class="alignment-status note" role="status"></p>
@@ -22,8 +27,12 @@ export class AlignmentPanel {
       minus.onclick=()=>update(((this.angles[axis]-90+540)%360)-180);plus.onclick=()=>update(((this.angles[axis]+90+540)%360)-180);
       return {slider,number};
     });
+    this.mirrorControls=['x','y','z'].map(axis=>this.panel.querySelector('#mirror-'+axis));
+    for(const input of this.mirrorControls)input.onchange=()=>{
+      this.cancel();this.change({...this.pose,enabled:true,mirror:this.mirrorControls.map(control=>control.checked)},null,this.angles.slice());
+    };
     const action=name=>this.panel.querySelector(`[data-action=${name}]`);
-    action('reset').onclick=()=>{this.cancel();this.change({enabled:false,rotation:IDENTITY.map(r=>r.slice()),pivot:this.defaultPivot.slice()});};
+    action('reset').onclick=()=>{this.cancel();this.change(originalPose(this.defaultPivot));};
     action('save').onclick=async()=>{
       const id=this.id,pose=structuredClone(this.pose),generation=this.generation;action('save').disabled=true;
       try{await this.post(`/api/datasets/${id}/alignment`,{pose});if(this.id===id&&generation===this.generation)this.status.textContent='对齐已保存；再次打开此数据集自动恢复。';}
@@ -40,7 +49,7 @@ export class AlignmentPanel {
     window.addEventListener('keydown',event=>{if(event.key==='Escape'&&this.mode)this.cancel();});
   }
   load(id,result){this.cancel();this.id=id;this.defaultPivot=result.default_pivot;this.pose=result.pose;this.generation++;this.panel.hidden=false;this.sync();this.status.textContent=result.warning||(this.pose.enabled?'已恢复此数据集保存的对齐。':'原始姿态。手动旋转顺序：固定 X → Y → Z。');}
-  sync(angles=null){this.angles=angles||anglesFromRotation(this.pose.enabled?this.pose.rotation:IDENTITY);this.controls.forEach((c,i)=>{c.slider.value=this.angles[i];c.number.value=Number(this.angles[i].toFixed(6));});}
+  sync(angles=null){this.angles=angles||anglesFromRotation(this.pose.enabled?this.pose.rotation:IDENTITY);this.controls.forEach((c,i)=>{c.slider.value=this.angles[i];c.number.value=Number(this.angles[i].toFixed(6));});this.mirrorControls.forEach((input,i)=>input.checked=Boolean(this.pose.mirror?.[i]));}
   cancel(){this.mode=null;this.points=[];this.mpr.picking=false;this.panel.querySelector('[data-action=cancel]').hidden=true;if(this.scene)this.scene.canvas.style.cursor='';}
   start(mode){
     if(!this.pose)return;
@@ -54,11 +63,10 @@ export class AlignmentPanel {
     if(!this.mode||!this.pose)return;const axis=Number(this.target.value);let rotation,point;
     try{
       if(this.mode==='face'){
-        if(!hit.normal)return;const current=this.pose.enabled?this.pose.rotation:IDENTITY,normal=current.map(row=>dot(row,hit.normal)),delta=faceRotation(normal,axis);
-        rotation=delta.map(row=>[0,1,2].map(c=>dot(row,current.map(r=>r[c]))));point=hit.point;
+        if(!hit.normal)return;rotation=faceAlignedRotation(this.pose,hit.normal,axis);point=hit.point;
       }else{
         this.points.push(hit.point);if(this.points.length<3){this.status.textContent=`已选 ${this.points.length} / 3 点：${hit.point.map(x=>Number(x.toPrecision(7))).join(', ')}。请继续选点。`;return;}
-        rotation=pointsRotation(this.points,axis);point=this.points[0];
+        rotation=pointsRotation(this.points,axis,this.pose.mirror);point=this.points[0];
       }
       this.cancel();const pose={...this.pose,enabled:true,rotation},coordinate=transformPoint(poseMatrix(pose),point)[axis];
       await this.change(pose,{axis,coordinate});

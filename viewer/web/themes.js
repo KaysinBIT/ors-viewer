@@ -4,4 +4,6 @@ export const THEMES={
   light:{name:'浅色',canvas:'#f4f5f6',header:'#e1e4e7',text:'#23282c',mesh:'#777c82',grid:'#b0b5bb',halo:'#ffffff',axes:['#20252b','#535c65','#818b95'],dashes:[[],[7,3],[2,3]]},
   ocean:{name:'深蓝',canvas:'#0c1c2b',header:'#142e44',text:'#dbeaf5',mesh:'#96c5d9',grid:'#34576f',halo:'#000000',axes:['#ff6868','#65e08d','#6aa9ff'],dashes:[[],[],[]]},
 };
-export function themeFor(key){return THEMES[key]||THEMES.mono;}
+export const DEFAULT_THEME_KEY='ocean';
+export const DEFAULT_THEME=THEMES[DEFAULT_THEME_KEY];
+export function themeFor(key){return Object.hasOwn(THEMES,key)?THEMES[key]:DEFAULT_THEME;}

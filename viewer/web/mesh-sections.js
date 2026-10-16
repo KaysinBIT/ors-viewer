@@ -1,10 +1,10 @@
 import * as THREE from './vendor/three.module.js';
-import {THEMES} from './themes.js';
+import {DEFAULT_THEME} from './themes.js';
 
 export class MeshSections {
   constructor(view,onResult,onStatus){
     this.view=view;this.onResult=onResult;this.onStatus=onStatus;this.root=new THREE.Group();view.scene.add(this.root);
-    this.theme=THEMES.mono;this.revision=0;this.active=false;this.displayMode='both';this.fillOpacity=.35;
+    this.theme=DEFAULT_THEME;this.revision=0;this.active=false;this.displayMode='both';this.fillOpacity=.35;
   }
   clear(){
     this.worker?.terminate();this.worker=null;this.workerReady=false;this.busy=false;this.pending=null;this.failed=false;

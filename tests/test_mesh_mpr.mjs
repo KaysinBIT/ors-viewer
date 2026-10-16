@@ -89,7 +89,7 @@ test('shared palette updates background, mesh, locator and volume material toget
     assert.equal(view.materials[0].color.getHexString(),new THREE.Color(theme.mesh).getHexString());
     assert.equal(view.volume.material.uniforms.uTint.value.getHexString(),new THREE.Color(theme.mesh).getHexString());
   }
-  assert.equal(themeFor('invalid'),THEMES.mono);
+  assert.equal(themeFor('invalid'),THEMES.ocean);
 });
 test('completed contour frames remain visible during continuous motion while stale fill is rejected',()=>{
   const saved=globalThis.Worker;let worker;globalThis.Worker=class {constructor(){worker=this;}postMessage(){}terminate(){}};

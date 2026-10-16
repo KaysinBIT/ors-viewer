@@ -3,7 +3,7 @@ import { SectionController } from './section.js';
 import { LocalFilePicker } from './file-picker.js';
 import { MPRView } from './mpr.js';
 import { ServerSettings } from './server-settings.js';
-import {themeFor,THEMES} from './themes.js';
+import {themeFor,THEMES,DEFAULT_THEME_KEY} from './themes.js';
 import {LatestRequest} from './mpr-math.js';
 import {createViewControls} from './view-controls.js';
 import {requestJson as api, requestPreview} from './data-client.js';
@@ -361,7 +361,7 @@ function createTableRow(values, rowKind) {
   if (rowKind === 'label_index') row.onclick = () => selectLabel(values[0]);
   return row;
 }
-function openDialog(){$('add-error').hidden=true;$('add-dialog').showModal();$('browse-path').focus();}
+function openDialog(){$('add-error').hidden=true;$('add-dialog').showModal();($('import-mode').value==='file'?$('import-file'):$('browse-path')).focus();}
 
 function updateSection(distance,commitNumber=false){
   if(!section||!state.preview)return;
@@ -380,7 +380,7 @@ function exportPreview(){
   const blob=createPreviewPLY(positions,indices);
   const url=URL.createObjectURL(blob),a=document.createElement('a');
   a.href=url;a.download='ORS_display_'+$('retention').value+'pct.ply';a.click();setTimeout(()=>URL.revokeObjectURL(url),DOWNLOAD_URL_LIFETIME_MS);
-  toast('已导出当前显示网格（剖切仅影响显示，未写入导出）');
+  toast('已导出源坐标网格（姿态、镜像与剖切仅影响显示，未写入导出）');
 }
 const token=()=>document.querySelector('meta[name=viewer-token]').content;
 const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token()},body:JSON.stringify(body)});
@@ -391,12 +391,12 @@ const alignment=new AlignmentPanel({host:$('inspector'),scene,mpr,post,onChange:
 const picker=new LocalFilePicker(post);
 const serverSettings=new ServerSettings(api,post);
 function applyTheme(key){
-  const selected=Object.hasOwn(THEMES,key)?key:'mono',theme=themeFor(selected);document.body.dataset.theme=selected;$('theme-select').value=selected;
+  const selected=Object.hasOwn(THEMES,key)?key:DEFAULT_THEME_KEY,theme=themeFor(selected);document.body.dataset.theme=selected;$('theme-select').value=selected;
   scene?.setTheme(theme);section?.setTheme(theme);mpr.setTheme(theme);
 }
 const themeSave=new LatestRequest(key=>post('/api/settings/theme',{theme:key}),()=>{},error=>toast('配色已切换，但未能保存：'+error.message));
 $('theme-select').onchange=()=>{const key=$('theme-select').value;applyTheme(key);themeSave.submit(key);};
-applyTheme('mono');
+applyTheme(DEFAULT_THEME_KEY);
 function importMode(){const mode=$('import-mode').value;$('path-field').hidden=mode==='file';$('file-field').hidden=mode!=='file';$('folder-path').value='';$('import-file').required=mode==='file';$('path-label').textContent=mode==='directory'?'解析输出目录':'本地文件路径';$('browse-path').textContent=mode==='directory'?'选择目录':'选择文件';$('folder-path').placeholder=mode==='directory'?'尚未选择解析目录':'尚未选择文件';$('confirm-add').textContent=mode==='directory'?'载入数据':'解析并显示';}
 $('browse-path').onclick=async()=>{
   const directory=$('import-mode').value==='directory';
@@ -489,6 +489,7 @@ $('add-dataset').onclick=openDialog;$('empty-add').onclick=openDialog;$('close-d
 $('toggle-inspector').onclick=()=>document.body.classList.toggle('inspector-open');
 $('close-inspector').onclick=()=>document.body.classList.remove('inspector-open');
 $('import-mode').onchange=importMode;
+importMode();
 $('add-form').onsubmit=async event=>{
   event.preventDefault();$('confirm-add').disabled=true;$('add-error').hidden=true;$('import-progress').hidden=false;$('import-progress').textContent='正在提交导入任务…';
   try{

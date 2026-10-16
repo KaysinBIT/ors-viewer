@@ -17,8 +17,11 @@ def validate_pose(value):
             not np.isfinite(rotation).all() or not np.isfinite(pivot).all() or
             not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-8, rtol=0) or
             not np.isclose(np.linalg.det(rotation), 1, atol=1e-8, rtol=0)):
-        raise ValueError('仅支持有限坐标与刚性旋转，不支持缩放、镜像或剪切')
-    return {'enabled': value['enabled'], 'rotation': rotation.tolist(), 'pivot': pivot.tolist()}
+        raise ValueError('旋转矩阵必须为有效刚性旋转；镜像请使用独立的 XYZ 镜像开关')
+    mirror = value.get('mirror', [False, False, False])
+    if not isinstance(mirror, list) or len(mirror) != 3 or any(type(flag) is not bool for flag in mirror):
+        raise ValueError('镜像开关必须为三个布尔值，分别对应 X、Y、Z')
+    return {'enabled': value['enabled'], 'rotation': rotation.tolist(), 'pivot': pivot.tolist(), 'mirror': mirror.copy()}
 
 
 def pose_matrix(value):
@@ -26,8 +29,10 @@ def pose_matrix(value):
     matrix = np.eye(4)
     if pose['enabled']:
         rotation, pivot = np.asarray(pose['rotation']), np.asarray(pose['pivot'])
-        matrix[:3, :3] = rotation
-        matrix[:3, 3] = pivot - rotation @ pivot
+        # Mirror the rotated dataset about fixed world axes through its pivot.
+        linear = np.where(pose['mirror'], -1.0, 1.0)[:, None] * rotation
+        matrix[:3, :3] = linear
+        matrix[:3, 3] = pivot - linear @ pivot
     if not np.isfinite(matrix).all():
         raise ValueError('旋转中心超出可计算坐标范围')
     return matrix
@@ -68,7 +73,7 @@ def dataset_alignment(catalog, dataset_id, settings_file):
                                             np.max([b[1] for b in bounds], axis=0).tolist()]
         bounds = dataset['_alignment_bounds']
     pivot = np.mean(bounds, axis=0).tolist()
-    pose = {'enabled': False, 'rotation': np.eye(3).tolist(), 'pivot': pivot}
+    pose = {'enabled': False, 'rotation': np.eye(3).tolist(), 'pivot': pivot, 'mirror': [False, False, False]}
     warning = ''
     if settings_file and Path(settings_file).is_file():
         try:

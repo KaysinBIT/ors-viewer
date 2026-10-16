@@ -1,5 +1,5 @@
 import * as THREE from './vendor/three.module.js';
-import {THEMES} from './themes.js';
+import {DEFAULT_THEME} from './themes.js';
 
 const sliceVertex=`uniform mat4 uWorldToVolume;out vec3 vTex;
 void main(){vec4 w=modelMatrix*vec4(position,1.0);vTex=(uWorldToVolume*w).xyz+.5;gl_Position=projectionMatrix*viewMatrix*w;}`;
@@ -19,7 +19,7 @@ export class SectionController {
     this.view=view;this.onStatus=onStatus;this.plane=new THREE.Plane();this.root=new THREE.Group();view.scene.add(this.root);
     view.renderer.localClippingEnabled=true;this.revision=0;
     this.options={enabled:false,azimuth:0,elevation:0,distance:0,flip:false,only:false,guide:true};
-    this.theme=THEMES.mono;this.fillMode='both';this.fillOpacity=.35;
+    this.theme=DEFAULT_THEME;this.fillMode='both';this.fillOpacity=.35;
   }
   clear(){
     this.worker?.terminate();this.worker=null;this.workerReady=false;this.busy=false;this.pending=null;

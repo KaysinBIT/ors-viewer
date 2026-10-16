@@ -37,7 +37,7 @@ class PortTests(unittest.TestCase):
             with self.assertRaises(ValueError):validate_port(value)
 
     def test_theme_persistence_preserves_port_and_data_directory(self):
-        self.assertEqual(load_theme(self.prefs),'mono');self.assertFalse(self.prefs.exists())
+        self.assertEqual(load_theme(self.prefs),'ocean');self.assertFalse(self.prefs.exists())
         save_directory(self.prefs,self.root);save_port(self.prefs,8769)
         for theme in ['light','ocean','mono']:
             save_theme(self.prefs,theme);self.assertEqual(load_theme(self.prefs),theme)
@@ -56,6 +56,15 @@ class PortTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as error:
             urllib.request.urlopen(urllib.request.Request(route,data=b'{"theme":"ocean"}'))
         self.assertEqual(error.exception.code,403);error.exception.close();self.assertEqual(load_theme(self.prefs),'light')
+
+    def test_ocean_default_does_not_override_saved_theme_or_write_preferences(self):
+        self.assertEqual(load_theme(None),'ocean')
+        for contents in ('{}','{"theme":"unsupported"}','not json'):
+            self.prefs.write_text(contents)
+            self.assertEqual(load_theme(self.prefs),'ocean');self.assertEqual(self.prefs.read_text(),contents)
+        for theme in ('mono','light','ocean'):
+            self.prefs.write_text(json.dumps({'theme':theme}))
+            self.assertEqual(load_theme(self.prefs),theme)
 
     def test_save_merges_data_directory_and_unknown_preferences(self):
         self.prefs.write_text(json.dumps({'custom_flag':'keep'}),encoding='utf-8')

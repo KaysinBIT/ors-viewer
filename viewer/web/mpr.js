@@ -4,7 +4,7 @@ import {poseMatrix,sourcePoint,transformPoint} from './alignment-math.js';
 import { AXES, IN_PLANE, clampIndex, planeTransform, imageToScreen, screenToIndices, LatestRequest } from './mpr-math.js';
 import {MeshSections} from './mesh-sections.js';
 import {meshPlaneTransform,meshToScreen,screenToMesh} from './mesh-sections-math.js';
-import {THEMES} from './themes.js';
+import {DEFAULT_THEME} from './themes.js';
 import {clampZoom,zoomImageTransform,zoomMeshTransform,panImageFocus,panMeshFocus} from './pane-view.js';
 
 async function resliceRequest(id,action,body,signal){
@@ -15,7 +15,7 @@ async function resliceRequest(id,action,body,signal){
 export class MPRView {
   constructor(layout, scene, onPosition, onRange=()=>{}) {
     this.layout=layout;this.scene=scene;this.onPosition=onPosition;this.indices=[0,0,0];this.panes=[];
-    this.low=0;this.high=1;this.generation=0;this.kind='volume';this.theme=THEMES.mono;this.fillMode='both';this.fillOpacity=.35;this.maximizedAxis=null;
+    this.low=0;this.high=1;this.generation=0;this.kind='volume';this.theme=DEFAULT_THEME;this.fillMode='both';this.fillOpacity=.35;this.maximizedAxis=null;
     if(scene)this.reslicePlanes=new ReslicePlanes(scene);
     if(scene)this.meshSections=new MeshSections(scene,data=>{
       this.meshResult=data;

@@ -26,7 +26,7 @@ class AlignmentTests(unittest.TestCase):
         np.save(self.root/'volume.npy', self.data)
         self.meta = {'type': 'CxvChannel', 'grid': {'shape_tzyx': list(self.data.shape),
                      'voxel_xyz_to_world': [[2, .2, 0, 80], [0, 3, 0, -40], [0, 0, 4, 10], [0, 0, 0, 1]]}}
-        self.pose = {'enabled': True, 'rotation': [[0, -1, 0], [1, 0, 0], [0, 0, 1]], 'pivot': [7, 8, 9]}
+        self.pose = {'enabled': True, 'rotation': [[0, -1, 0], [1, 0, 0], [0, 0, 1]], 'pivot': [7, 8, 9], 'mirror': [False, False, False]}
 
     def test_shared_pivot_rigid_rotation_and_disable(self):
         matrix = pose_matrix(self.pose)
@@ -98,6 +98,7 @@ class AlignmentTests(unittest.TestCase):
         with self.assertRaises(ValueError): geometry({'type':'CxvFaceVertexMesh'},self.pose)
 
     def test_authenticated_alignment_and_reslice_http_roundtrip(self):
+        self.pose['mirror'] = [True, False, True]
         (self.root/'metadata.json').write_text(json.dumps(self.meta))
         catalog=Catalog(); catalog.objects={'v':self.root}; catalog.datasets={'d':{'objects':[{'id':'v'}]}}
         settings=self.root/'settings.json'; settings.write_text('{"theme":"ocean","port":1234}')
@@ -127,6 +128,49 @@ class AlignmentTests(unittest.TestCase):
         before=settings.read_bytes()
         with self.assertRaises(urllib.error.HTTPError) as error:post('/api/datasets/d/alignment',{'pose':{**self.pose,'pivot':[0,0]}})
         self.assertEqual(error.exception.code,400);error.exception.close();self.assertEqual(settings.read_bytes(),before)
+
+    def test_all_mirror_combinations_reverse_ct_and_segmentation_without_modifying_sources(self):
+        self.meta['grid']['voxel_xyz_to_world'] = np.eye(4).tolist()
+        labels = (self.data.astype('<u4') + 1) * 70000
+        np.save(self.root/'labels.npy', labels)
+        np.save(self.root/'label_intervals.npy', np.array([[i, i, value] for i, value in enumerate(labels.ravel())], dtype='<u8'))
+        before = {p.name: p.read_bytes() for p in self.root.glob('*.npy')}
+        for bits in range(8):
+            mirror = [bool(bits & (1 << i)) for i in range(3)]
+            pose = {'enabled': True, 'rotation': np.eye(3).tolist(), 'pivot': [2, 1.5, 1], 'mirror': mirror}
+            self.assertAlmostEqual(np.linalg.det(pose_matrix(pose)[:3,:3]), (-1)**sum(mirror))
+            for time in (0, 1):
+                for kind, data in [('CxvChannel',self.data),('CxvLabeledMultiROI',labels)]:
+                    expected = data[time]
+                    for axis in range(3):
+                        if mirror[axis]: expected = np.flip(expected, axis=2-axis)
+                    meta = {**self.meta, 'type': kind}
+                    for axis in range(3):
+                        _, arrays = unpack(reslice_packet(self.root, meta, pose, axis, 1, time))
+                        np.testing.assert_array_equal(arrays['pixels'], np.take(expected, 1, axis=2-axis))
+                        self.assertTrue(arrays['mask'].all())
+            # Sparse interval labels must agree with the dense reference after a reflection.
+            dense = self.root/'labels.npy'; sparse_backup = self.root/'dense-backup.npy'; dense.rename(sparse_backup)
+            try:
+                _, arrays = unpack(reslice_packet(self.root, {**self.meta,'type':'CxvLabeledMultiROI'}, pose, 2, 1, 1))
+                np.testing.assert_array_equal(arrays['pixels'], expected[1])
+            finally: sparse_backup.rename(dense)
+        for name, content in before.items(): self.assertEqual((self.root/name).read_bytes(), content)
+
+    def test_mirror_validation_and_legacy_saved_pose_migration(self):
+        legacy = {k:v for k,v in self.pose.items() if k!='mirror'}
+        migrated = validate_pose(legacy)
+        self.assertEqual(migrated['mirror'], [False]*3)
+        np.testing.assert_array_equal(pose_matrix(legacy), pose_matrix(migrated))
+        for invalid in (None, [], [True], [True,False,False,True], [1,0,0], ['true',False,False], {'x':True}):
+            with self.assertRaises(ValueError): validate_pose({**legacy,'mirror':invalid})
+        disabled = {**self.pose,'enabled':False,'mirror':[True]*3}
+        np.testing.assert_array_equal(pose_matrix(disabled), np.eye(4))
+        (self.root/'metadata.json').write_text(json.dumps(self.meta))
+        catalog=Catalog(); catalog.objects={'v':self.root}; catalog.datasets={'d':{'objects':[{'id':'v'}]}}
+        settings=self.root/'legacy.json'; settings.write_text(json.dumps({'alignments':{'d':legacy},'theme':'light'}))
+        before=settings.read_bytes(); restored=dataset_alignment(catalog,'d',settings)['pose']
+        self.assertEqual(restored,migrated);self.assertEqual(settings.read_bytes(),before)
 
 
 if __name__ == '__main__': unittest.main()

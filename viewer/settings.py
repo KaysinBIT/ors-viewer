@@ -7,6 +7,7 @@ import threading
 import uuid
 
 DEFAULT_PORT = 0  # The OS assigns an available loopback port.
+DEFAULT_THEME = 'ocean'
 _write_lock = threading.RLock()
 
 
@@ -77,10 +78,10 @@ def save_port(settings_file, port):
 
 
 def load_theme(path):
-    if path is None: return 'mono'
-    try: value = read_settings(path).get('theme', 'mono')
-    except (OSError, ValueError, TypeError): return 'mono'
-    return value if value in ('mono', 'light', 'ocean') else 'mono'
+    if path is None: return DEFAULT_THEME
+    try: value = read_settings(path).get('theme', DEFAULT_THEME)
+    except (OSError, ValueError, TypeError): return DEFAULT_THEME
+    return value if value in ('mono', 'light', 'ocean') else DEFAULT_THEME
 
 
 def save_theme(path, theme):

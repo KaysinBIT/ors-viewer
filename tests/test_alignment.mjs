@@ -1,7 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from '../viewer/web/vendor/three.module.js';
-import {IDENTITY,poseMatrix,sourcePoint,transformPoint,sourcePlane,rotationFromAngles,anglesFromRotation,faceRotation,pointsRotation} from '../viewer/web/alignment-math.js';
+import {IDENTITY,poseMatrix,sourcePoint,transformPoint,sourcePlane,rotationFromAngles,anglesFromRotation,faceRotation,faceAlignedRotation,pointsRotation,originalPose} from '../viewer/web/alignment-math.js';
+import {contourFill} from '../viewer/web/contour-fill.js';
+import {obliqueSectionFill} from '../viewer/web/section-fill.js';
+import {createPreviewPLY} from '../viewer/web/export-ply.js';
 import {sectionContours} from '../viewer/web/section-math.js';
 import {buildSectionIndex,queryPlaneIndex} from '../viewer/web/mesh-section-index.js';
 import {SceneView} from '../viewer/web/scene.js';
@@ -16,6 +19,47 @@ import {LatestRequest} from '../viewer/web/mpr-math.js';
 const close=(a,b,tolerance=1e-7)=>{assert.equal(a.length,b.length);a.forEach((x,i)=>assert.ok(Math.abs(x-b[i])<=tolerance,`${x} != ${b[i]}`));};
 const pose={enabled:true,pivot:[100,-25,12],rotation:rotationFromAngles([23,-47,91])};
 const vertices=new Float32Array([0,0,0,1,0,0,0,1,0,0,0,1]),indices=new Uint32Array([0,2,1,0,1,3,1,2,3,2,0,3]);
+const mirrors=Array.from({length:8},(_,bits)=>[0,1,2].map(i=>Boolean(bits&(1<<i))));
+test('XYZ mirrors follow rotation about one dataset pivot and reset together',()=>{
+  const point=[11,27,32],rotated=transformPoint(poseMatrix(pose),point);
+  for(const mirror of mirrors){
+    const matrix=poseMatrix({...pose,mirror}),actual=transformPoint(matrix,point);
+    close(actual,rotated.map((x,i)=>mirror[i]?2*pose.pivot[i]-x:x));
+    close(transformPoint(matrix,pose.pivot),pose.pivot);close(sourcePoint(matrix,actual),point);
+    close([new THREE.Matrix4().set(...matrix.flat()).determinant()],[(-1)**mirror.filter(Boolean).length]);
+  }
+  const reset=originalPose(pose.pivot);assert.deepEqual(reset.mirror,[false,false,false]);assert.deepEqual(poseMatrix(reset),poseMatrix(null));
+  assert.notEqual(reset.pivot,pose.pivot);
+});
+test('face and three-point auto alignment preserve mirror switches and produce the selected orientation',()=>{
+  const points=[[10,20,30],[12,21,33],[8,25,31]],normal=new THREE.Vector3(2,-3,5).normalize().toArray();
+  for(const mirror of mirrors)for(let axis=0;axis<3;axis++){
+    const rotation=faceAlignedRotation({...pose,mirror},normal,axis),m=poseMatrix({...pose,mirror,rotation,pivot:[0,0,0]}),target=[0,0,0];target[axis]=1;
+    close(transformPoint(m,normal),target);close([new THREE.Matrix3().set(...rotation.flat()).determinant()],[1]);
+    const r=pointsRotation(points,axis,mirror),matrix=poseMatrix({...pose,mirror,rotation:r}),q=points.map(p=>new THREE.Vector3(...transformPoint(matrix,p)));
+    close(q.map(p=>p.getComponent(axis)),Array(3).fill(q[0].getComponent(axis)));
+    const tangent=q[1].clone().sub(q[0]).normalize(),orderedNormal=tangent.clone().cross(q[2].clone().sub(q[0])).normalize();
+    close(orderedNormal.toArray(),target);assert.ok(tangent.getComponent(axis===0?1:0)>.999999);
+    close([new THREE.Matrix3().set(...r.flat()).determinant()],[1]);
+  }
+});
+test('mirrored mesh MPR and oblique fills match transformed geometry while source PLY stays byte identical',async()=>{
+  const before=Buffer.from(await createPreviewPLY(vertices,indices).arrayBuffer());
+  const sort=lines=>Array.from({length:lines.length/6},(_,i)=>Array.from(lines.slice(i*6,i*6+6),x=>x.toFixed(5)).join(',')).sort();
+  for(const mirror of mirrors){
+    const matrix=poseMatrix({...pose,mirror}),transformed=new Float64Array(vertices.length),center=transformPoint(matrix,[.25,.25,.25]);
+    for(let i=0;i<vertices.length;i+=3)transformed.set(transformPoint(matrix,Array.from(vertices.slice(i,i+3))),i);
+    const normals=[[1,0,0],[0,1,0],[0,0,1],new THREE.Vector3(1,2,3).normalize().toArray()];
+    for(const [axis,normal] of normals.entries()){
+      const constant=-normal.reduce((s,x,i)=>s+x*center[i],0),source=sourcePlane(matrix,normal,constant);
+      const a=sectionContours(vertices,indices,source.normal,source.constant,center,2,1e-9,matrix),b=sectionContours(transformed,indices,normal,constant,center,2,1e-9);
+      assert.deepEqual(sort(a.lines),sort(b.lines));
+      const fill=axis<3?contourFill(a.lines,axis,a.coplanarFlags):obliqueSectionFill(a.lines,normal,[0,0,0],a.coplanarFlags);
+      assert.equal(fill.status,'filled');assert.equal(fill.loops,1);
+    }
+  }
+  assert.deepEqual(Buffer.from(await createPreviewPLY(vertices,indices).arrayBuffer()),before);
+});
 test('rapid pose changes retain one CPU request slot and discard every previous pose',async()=>{
   const pending=[],accepted=[],queue=new LatestRequest((job,signal)=>new Promise(resolve=>pending.push({job,signal,resolve})),value=>accepted.push(value),error=>{throw error;},true);
   queue.submit('old');
@@ -71,7 +115,7 @@ test('scene pose changes reuse full mesh buffers and also transform the CT grid 
   const volume={meta:{matrix:[[2,0,0,10],[0,3,0,20],[0,0,4,30],[0,0,0,1]]},mesh:new THREE.Mesh(),planes:[new THREE.Mesh()],outlines:[new THREE.Line()]};
   group.add(volume.mesh,...volume.planes,...volume.outlines);
   const view={group,sourceBounds,mesh,volume,alignment:new THREE.Matrix4(),grid:new THREE.Group(),axes:new THREE.Group(),box:new THREE.Box3Helper(sourceBounds.clone())};
-  const matrix=poseMatrix(pose);SceneView.prototype.setAlignment.call(view,matrix);
+  const matrix=poseMatrix({...pose,mirror:[true,false,false]});SceneView.prototype.setAlignment.call(view,matrix);
   assert.equal(mesh.geometry.attributes.position.array,vertices);assert.equal(mesh.geometry.index.array,indices);
   const expected=new THREE.Matrix4().set(...matrix.flat()).multiply(new THREE.Matrix4().set(...volume.meta.matrix.flat()));
   for(const o of [volume.mesh,...volume.planes,...volume.outlines])close(o.matrix.elements,expected.elements);

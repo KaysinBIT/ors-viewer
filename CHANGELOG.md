@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0RC2 (prerelease)
+
+- Add independent X/Y/Z dataset mirror switches, applied after rotation about the shared dataset pivot. Meshes, CT and segmentation use the same transform for rendering and sections.
+- Preserve mirrors during face/three-point alignment; save and restore them with pose preferences. Legacy rotation-only settings remain compatible. Reset clears both rotation and mirrors.
+- Make file selection the first and default import mode; retain local-path and decoded-directory import.
+- Default to the ocean (deep blue) theme across 3D/MPR and the initial page; retain explicitly saved theme preferences.
+- Keep source arrays and PLY exports unchanged. 210 automated tests pass; browser visual acceptance is not performed for this release.
+
 ## 1.2.0rc1 (candidate)
 
 - Add dataset-wide rigid orientation with a shared source-space pivot, manual XYZ angles, quarter-turn buttons, reference faces and three-point alignment.

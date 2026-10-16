@@ -1,6 +1,6 @@
 import * as THREE from './vendor/three.module.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
-import {THEMES} from './themes.js';
+import {DEFAULT_THEME} from './themes.js';
 
 export function parsePacket(buffer) {
   const view = new DataView(buffer), length = view.getUint32(0, true);
@@ -123,7 +123,7 @@ void main() {
 export class SceneView {
   constructor(canvas, onError) {
     this.canvas = canvas;
-    this.theme=THEMES.mono;
+    this.theme=DEFAULT_THEME;
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.setClearColor(0, 0);
