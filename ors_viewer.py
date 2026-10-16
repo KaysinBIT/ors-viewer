@@ -6,9 +6,9 @@ from pathlib import Path
 import sys
 import threading
 import webbrowser
-from viewer.settings import settings_path, load_directory, validate_directory
+from viewer.settings import settings_path, load_directory, validate_directory, validate_port
 
-VERSION = '0.7.0'
+VERSION = '0.7.1'
 
 
 def configure_logs(directory):
@@ -24,7 +24,7 @@ def configure_logs(directory):
 def desktop(server, url):
     import tkinter as tk
     from tkinter import ttk
-    window = tk.Tk();window.title('ORS Viewer');window.geometry('600x390');window.minsize(500, 350)
+    window = tk.Tk();window.title('ORS Viewer');window.geometry('640x440');window.minsize(560, 400)
     frame = ttk.Frame(window, padding=24);frame.pack(fill='both', expand=True)
     ttk.Label(frame, text='ORS Viewer', font=('Segoe UI', 22, 'bold')).pack(anchor='w')
     ttk.Label(frame, text='独立文件解析与三维查看', font=('Microsoft YaHei UI', 11)).pack(anchor='w', pady=(2, 20))
@@ -38,6 +38,7 @@ def desktop(server, url):
     ttk.Button(buttons, text='打开三维界面', command=lambda: webbrowser.open(url)).pack(side='left')
     data_button = ttk.Button(buttons, text='打开数据目录', command=lambda: open_directory(server.workspace.directory))
     data_button.pack(side='left', padx=10)
+    ttk.Button(buttons, text='端口设置', command=lambda: webbrowser.open(url+'#settings')).pack(side='left')
     def close():
         status.set('正在停止服务…');window.update_idletasks()
         server.workspace.close();server.shutdown();server.server_close();window.destroy()
@@ -46,7 +47,8 @@ def desktop(server, url):
     window.protocol('WM_DELETE_WINDOW', close)
     def refresh_status():
         current = server.workspace.public()
-        status.set(('本地服务运行中 · v' + VERSION) if current['ready'] else '首次使用：请在浏览器中选择数据目录')
+        status.set((('本地服务运行中 · v' + VERSION) if current['ready'] else '首次使用：请在浏览器中选择数据目录')
+                   + f" · 端口 {current['port']}")
         data_label.set('数据目录：' + (current['data_directory'] or '尚未设置'))
         data_button.configure(state='normal' if current['ready'] else 'disabled')
         window.after(300, refresh_status)
@@ -74,7 +76,7 @@ def main(argv=None):
     parser.add_argument('--version', action='version', version=VERSION)
     parser.add_argument('--headless', action='store_true', help='Run local server without the desktop launcher')
     parser.add_argument('--open', action='store_true', help='Open browser in headless mode')
-    parser.add_argument('--port', type=int, default=0)
+    parser.add_argument('--port', type=validate_port, default=None, help='Port for this run (0: automatic); overrides saved port')
     directory_options = parser.add_mutually_exclusive_group()
     directory_options.add_argument('--state-dir', type=Path, help='Use a data directory for this run without changing saved preferences')
     directory_options.add_argument('--choose-data-dir', action='store_true', help='Show the data-directory setup page again')
@@ -95,6 +97,7 @@ def main(argv=None):
                               recover_directory=args.state_dir is None)
     if args.headless:
         if sys.stdout is not None: print('ORS Viewer: ' + url, flush=True)
+        if server.workspace.port_warning and sys.stderr is not None: print(server.workspace.port_warning, file=sys.stderr, flush=True)
         if args.open: webbrowser.open(url)
         try: server.serve_forever()
         except KeyboardInterrupt: pass

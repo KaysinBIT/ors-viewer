@@ -7,3 +7,5 @@
 - **PyInstaller bootloader** — GPL with the special exception permitting distribution of bundled applications under their own license. License files are included in `licenses/pyinstaller/` in Windows bundles. Source: https://pyinstaller.org/
 
 The independent parser does not distribute Dragonfly binaries, SDKs or proprietary runtime components. ORSSession and ORSObject names identify supported input formats and do not imply affiliation or endorsement.
+
+See [Independent implementation and third-party rights](INDEPENDENT_IMPLEMENTATION.txt) for the scope of the implementation statement, data authorization boundaries and public references. This statement does not grant rights in third-party software, patents, trademarks or datasets, and is not a non-infringement guarantee.

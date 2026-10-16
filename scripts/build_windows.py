@@ -9,7 +9,7 @@ import sys
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-VERSION = '0.7.0'
+VERSION = '0.7.1'
 
 
 def main():
@@ -17,7 +17,7 @@ def main():
     subprocess.run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-q'], cwd=ROOT, check=True)
     subprocess.run([sys.executable, '-m', 'PyInstaller', '--noconfirm', 'ORSViewer.spec'], cwd=ROOT, check=True)
     folder = ROOT / 'dist' / 'ORSViewer'
-    for name in ['README.md', 'LICENSE', 'CHANGELOG.md', 'THIRD_PARTY_NOTICES.md']:
+    for name in ['README.md', 'LICENSE', 'CHANGELOG.md', 'THIRD_PARTY_NOTICES.md', 'INDEPENDENT_IMPLEMENTATION.txt']:
         shutil.copy2(ROOT / name, folder / name)
     shutil.copy2(ROOT / 'viewer/web/manual.pdf', folder / 'ORSViewer-User-Manual-zh-CN.pdf')
     licenses = folder / 'licenses';licenses.mkdir(exist_ok=True)

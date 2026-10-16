@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Loopback-only local viewer for independent ORS decoding results."""
 import argparse
+import errno
 import hashlib
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -10,6 +11,7 @@ import mimetypes
 import os
 from pathlib import Path
 import secrets
+import socket
 import threading
 import uuid
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -20,12 +22,21 @@ from .preview import PreviewCache, safe_file, unit_of
 from .slices import slice_packet, voxel_value
 from .imports import ImportJobs, EXTENSIONS
 from .file_browser import list_directory, create_directory
-from .settings import validate_directory, save_directory
+from .settings import validate_directory, save_directory, load_port, save_port, validate_port
 
 HERE = Path(__file__).resolve().parent
 WEB = HERE / 'web'
 KINDS = {'CxvFaceVertexMesh': 'mesh', 'CxvChannel': 'volume',
          'CxvVolume_ROI': 'labels', 'CxvLabeledMultiROI': 'labels'}
+
+
+class LocalHTTPServer(ThreadingHTTPServer):
+    # Windows SO_REUSEADDR permits another listener on an occupied port.
+    allow_reuse_address = os.name != 'nt'
+
+    def server_bind(self):
+        if os.name == 'nt': self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
 
 
 def clean_json(value):
@@ -142,7 +153,7 @@ def handler(catalog, cache, token, imports=None, workspace=None):
             try:
                 url = urlsplit(self.path);route = unquote(url.path);q = parse_qs(url.query)
                 if route == '/api/catalog': return self.json({'datasets': catalog.public()})
-                if route == '/api/health': return self.json({'ok': True, 'version': '0.7.0'})
+                if route == '/api/health': return self.json({'ok': True, 'version': '0.7.1'})
                 if route == '/api/settings':
                     return self.json(workspace.public() if workspace else {'ready': True, 'data_directory': None, 'message': ''})
                 parts = route.strip('/').split('/')
@@ -195,7 +206,7 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                 url = urlsplit(self.path)
                 size = int(self.headers.get('Content-Length', 0))
                 active_imports = workspace.imports if workspace else imports
-                if url.path in ('/api/filesystem/list', '/api/filesystem/mkdir', '/api/settings/data-directory'):
+                if url.path in ('/api/filesystem/list', '/api/filesystem/mkdir', '/api/settings/data-directory', '/api/settings/port'):
                     if not 0 < size <= 8192: raise ValueError('请求大小无效')
                     body = json.loads(self.rfile.read(size))
                     if url.path == '/api/filesystem/list':
@@ -203,6 +214,9 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                     if url.path == '/api/filesystem/mkdir':
                         return self.json({'path': create_directory(body['path'], body['name'])})
                     if workspace is None: raise ValueError('数据目录设置不可用')
+                    if url.path == '/api/settings/port':
+                        workspace.choose_port(body['port'])
+                        return self.json(workspace.public())
                     workspace.choose(body['path'])
                     return self.json(workspace.public())
                 if workspace and not workspace.ready: raise ValueError('请先完成首次数据目录设置')
@@ -243,11 +257,21 @@ class Workspace:
         self.catalog = Catalog();self.cache = None;self.imports = None;self.directory = None
         self.settings_file = settings_file;self.directories = directories;self.message = message
         self.on_ready = on_ready;self.lock = threading.RLock();self.ready = False;self.server = None
+        self.requested_port = 0;self.port_warning = '';self.port_source = 'default'
 
     def public(self):
         with self.lock:
+            saved_port, settings_warning = load_port(self.settings_file)
             return {'ready': self.ready, 'data_directory': str(self.directory) if self.directory else None,
-                    'message': self.message}
+                    'message': self.message, 'port': self.server.server_port if self.server else None,
+                    'saved_port': saved_port, 'port_source': self.port_source,
+                    'port_warning': self.port_warning or settings_warning,
+                    'restart_required': saved_port != self.requested_port}
+
+    def choose_port(self, port):
+        with self.lock:
+            save_port(self.settings_file, port)
+            self.port_warning = ''
 
     def activate(self, directory, persist=False):
         with self.lock:
@@ -288,14 +312,29 @@ class Workspace:
 
 def make_server(port, directories, state_dir=None, settings_file=None, setup_message='', on_ready=None, recover_directory=False):
     workspace = Workspace(settings_file, directories, setup_message, on_ready)
-    if state_dir is not None:
-        try: workspace.activate(validate_directory(state_dir, create=not recover_directory))
-        except (OSError, ValueError):
-            if not recover_directory: raise
-            workspace.message = '已保存的数据目录无法使用，请重新选择。已有文件保持不变。'
-    server = ThreadingHTTPServer(('127.0.0.1', port), handler(workspace.catalog, None, secrets.token_hex(24), workspace=workspace))
+    saved_port, warning = load_port(settings_file)
+    requested = saved_port if port is None else validate_port(port)
+    workspace.requested_port = requested
+    workspace.port_source = 'command-line' if port is not None else ('saved' if saved_port else 'default')
+    workspace.port_warning = warning if port is None else ''
+    request_handler = handler(workspace.catalog, None, secrets.token_hex(24), workspace=workspace)
+    try:
+        server = LocalHTTPServer(('127.0.0.1', requested), request_handler)
+    except OSError as exc:
+        if exc.errno not in (errno.EADDRINUSE, errno.EACCES, 10048, 10013): raise
+        if port is not None or requested == 0:
+            raise ValueError(f'无法监听端口 {requested}：端口被占用或无绑定权限。请使用 --port 指定其他端口，或用 --port 0 自动分配。') from exc
+        server = LocalHTTPServer(('127.0.0.1', 0), request_handler)
+        workspace.requested_port = 0
+        workspace.port_warning = f'保存的端口 {requested} 被占用或无绑定权限，本次临时使用 {server.server_port}。已保存的端口未改变，可在端口设置中修改。'
     server.daemon_threads = True;server.workspace = workspace;workspace.server = server
-    try: workspace.write_runtime()
+    try:
+        if state_dir is not None:
+            try: workspace.activate(validate_directory(state_dir, create=not recover_directory))
+            except (OSError, ValueError):
+                if not recover_directory: raise
+                workspace.message = '已保存的数据目录无法使用，请重新选择。已有文件保持不变。'
+        workspace.write_runtime()
     except Exception:
         workspace.close();server.server_close();raise
     return server, 'http://127.0.0.1:%d/' % server.server_port

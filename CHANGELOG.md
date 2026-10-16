@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1
+
+- Add a persistent web port setting with automatic and custom port modes.
+- Apply saved ports on the next launch; command-line overrides affect only the current run.
+- Report occupied saved ports and use a temporary loopback port; explicit command-line conflicts fail clearly.
+- Preserve data-directory preferences and require exclusive socket binding on Windows.
+- Add an independent implementation and third-party rights statement, available offline and in distributions.
+- Update the HTML/PDF user manual with port configuration instructions.
+
 ## 0.7.0
 
 - Linked CT views: three original-resolution 2D planes and a synchronized 3D locator.

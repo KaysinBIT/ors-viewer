@@ -4,9 +4,24 @@ import html
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def build_independence():
+    source=(ROOT/'INDEPENDENT_IMPLEMENTATION.txt').read_text('utf-8')
+    blocks=source.strip().split('\n\n');parts=[]
+    for i,block in enumerate(blocks):
+        if i==0: parts.append('<h1>'+html.escape(block.splitlines()[0])+'</h1><p>'+html.escape(' '.join(block.splitlines()[1:]))+'</p>')
+        elif '\n' not in block and len(block)<25: parts.append('<h2>'+html.escape(block)+'</h2>')
+        else:
+            text=html.escape(block)
+            text=re.sub(r'https://[^\s]+',lambda m:'<a href="'+m[0]+'" target="_blank" rel="noopener">'+m[0]+'</a>',text)
+            parts.append('<p>'+text.replace('\n','<br>')+'</p>')
+    css='body{font:15px/1.9 "Microsoft YaHei","Segoe UI",sans-serif;color:#24394a;background:#edf2f5;margin:0}main{max-width:900px;margin:30px auto;padding:32px 44px;background:white;border:1px solid #d3dfe8;border-radius:12px}h1{font-size:26px;color:#154462}h2{font-size:18px;margin-top:30px;color:#216276}a{color:#226d9f;overflow-wrap:anywhere}p{overflow-wrap:anywhere}@media(max-width:700px){main{margin:12px;padding:20px}h1{font-size:22px}}'
+    (ROOT/'viewer/web/independence.html').write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ORS Viewer 独立实现说明</title><style>'+css+'</style><main><a href="/">返回查看器</a>'+''.join(parts)+'</main></html>',encoding='utf-8',newline='\n')
 
 
 def build_html(book):
@@ -96,7 +111,7 @@ def main():
     parser=argparse.ArgumentParser();fonts=Path(os.environ.get('WINDIR','C:/Windows'))/'Fonts'
     parser.add_argument('--font',type=Path,default=fonts/'msyh.ttc');parser.add_argument('--font-bold',type=Path,default=fonts/'msyhbd.ttc')
     args=parser.parse_args();book=json.loads((ROOT/'docs/manual_content.json').read_text('utf-8'))
-    build_html(book);print(build_pdf(book,args.font,args.font_bold))
+    build_html(book);build_independence();print(build_pdf(book,args.font,args.font_bold))
 
 
 if __name__=='__main__':main()

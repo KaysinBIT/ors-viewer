@@ -2,6 +2,7 @@ import { SceneView, parsePacket, labelColor } from './scene.js';
 import { SectionController } from './section.js';
 import { LocalFilePicker } from './file-picker.js';
 import { MPRView } from './mpr.js';
+import { ServerSettings } from './server-settings.js';
 
 const $=id=>document.getElementById(id);
 const state={datasets:[],dataset:null,object:null,meta:null,preview:null,filter:'all',request:0,tableStart:0,selectedLabel:0};
@@ -227,6 +228,7 @@ function exportPreview(){
 const token=()=>document.querySelector('meta[name=viewer-token]').content;
 const post=(path,body)=>api(path,{method:'POST',headers:{'Content-Type':'application/json','X-Viewer-Token':token()},body:JSON.stringify(body)});
 const picker=new LocalFilePicker(post);
+const serverSettings=new ServerSettings(api,post);
 function importMode(){const mode=$('import-mode').value;$('path-field').hidden=mode==='file';$('file-field').hidden=mode!=='file';$('folder-path').value='';$('import-file').required=mode==='file';$('path-label').textContent=mode==='directory'?'解析输出目录':'本地文件路径';$('browse-path').textContent=mode==='directory'?'选择目录':'选择文件';$('folder-path').placeholder=mode==='directory'?'尚未选择解析目录':'尚未选择文件';$('confirm-add').textContent=mode==='directory'?'载入数据':'解析并显示';}
 $('browse-path').onclick=async()=>{
   const directory=$('import-mode').value==='directory';
@@ -311,11 +313,13 @@ $('add-form').onsubmit=async event=>{
 window.addEventListener('keydown',event=>{if(event.key==='Escape')document.body.classList.remove('inspector-open');if(event.key.toLowerCase()==='f'&&!document.querySelector('dialog[open]')&&!['INPUT','SELECT','TEXTAREA'].includes(event.target.tagName)){state.faceSection=false;scene?.fit();}});
 async function initialize(){
   const settings=await api('/api/settings');state.dataDirectory=settings.data_directory;
+  serverSettings.observe(settings);
   if(!settings.ready){
     $('app-status').textContent='首次使用 · 请选择数据目录';$('setup-message').textContent=settings.message||'解析结果、显示缓存和日志将保存在你选择的目录中。';
-    $('setup-dialog').showModal();return;
+    $('setup-dialog').showModal();if(location.hash==='#settings'||settings.port_warning)await serverSettings.open();return;
   }
   await loadCatalog();
+  if(location.hash==='#settings'||settings.port_warning)await serverSettings.open();
   const pendingJob=localStorage.getItem('ors-import-job');if(pendingJob){$('confirm-add').disabled=true;api('/api/imports/'+pendingJob).then(watchImport).catch(error=>{localStorage.removeItem('ors-import-job');toast(error.message);}).finally(()=>$('confirm-add').disabled=false);}
 }
 initialize().catch(error=>{showError(error.message);$('app-status').textContent='无法连接本地数据服务';});
