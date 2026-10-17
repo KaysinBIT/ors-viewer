@@ -263,7 +263,7 @@ async function setupReslice(snap=null){
     mpr.resliceSource(objectId,info,pose,state.object.kind==='volume'?Number($('time-step').value||0):0,coordinates);mpr.suspended=false;
     if(state.object.kind==='volume'){
       setCoordinateRanges('slice',info.bounds);setSlicePosition(coordinates);updateVolumeMode();scene.iso(Number($('iso').value)/PERCENT_SCALE);
-      $('mpr-help').textContent='XYZ 为固定世界轴，位置单位沿用源数据。三维先按当前预览精度显示切片，完整切面到达后替换；二维更新期间保留上一帧并标记状态。';
+      $('mpr-help').textContent='XYZ 为固定世界轴，位置单位沿用源数据。右上三维窗口显示完整模型，与 3D 共用渲染方式；二维切面更新期间保留上一帧并标记状态。';
     }else{setCoordinateRanges('mesh',info.bounds);updateMeshPosition(coordinates);updateMeshMode();}
     if(snap&&!mpr.active)viewControls.toggleMPR();
     mpr.position(coordinates);
@@ -477,6 +477,7 @@ updateMeshDisplay();
 $('opacity').oninput=()=>{$('opacity-value').textContent=$('opacity').value+'%';scene?.opacity(Number($('opacity').value)/PERCENT_SCALE);};
 $('wireframe').onchange=()=>scene?.wireframe($('wireframe').checked);$('show-grid').onchange=()=>scene?.showGrid($('show-grid').checked);$('show-box').onchange=()=>scene?.showBox($('show-box').checked);
 $('scalar-select').onchange=selectScalar;$('volume-mode').onchange=updateVolumeMode;
+$('mpr-render-mode').onchange=()=>{state.volume3DMode=$('mpr-render-mode').value;updateVolumeMode();};
 $('window-low').oninput=updateWindow;$('window-high').oninput=updateWindow;
 $('iso').oninput=()=>{$('iso-value').textContent=$('iso').value+'%';scene?.iso(Number($('iso').value)/PERCENT_SCALE);};
 AXIS_KEYS.forEach((axis,i)=>$('slice-'+axis).oninput=()=>updateSlice(axis,i));$('all-labels').onclick=()=>selectLabel(0);

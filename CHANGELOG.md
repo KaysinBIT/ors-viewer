@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0RC4 (local fix candidate)
+
+- Remove BLAS/LAPACK calls from spatial transforms, preview coordinate conversion and reslicing to prevent the Windows native access violation reproduced under concurrent slice requests. Preserve interpolation, source arrays and coordinate units.
+- Show the complete CT model in MPR, with locator outlines. Share maximum-intensity-projection / isosurface selection and display settings with the independent 3D view; keep explicit 3D slice mode available.
+- Explain disconnected local-service requests and restore mesh crosshair navigation after the prior frame-generation guard.
+- Add affine, concurrent-packet and shared-rendering regressions. Browser page verification remains pending.
+
 ## 1.2.0RC3 (local fix candidate)
 
 - Keep the last valid 2D planes visible while a new orientation is calculated. Retained frames use their own dimensions and affine, with pending status and point-picking protection.

@@ -330,7 +330,8 @@ export class SceneView {
     }
     material.needsUpdate=true;this.dirty=true;
   }
-  volumeMode(mode){if(!this.volume)return;this.volume.mode=mode;this.volume.mesh.visible=mode!=='slices';this.volume.planes.forEach(p=>p.visible=mode==='slices'&&!this.resliceActive);this.volume.outlines.forEach(p=>p.visible=mode==='slices'&&!this.resliceActive);this.volume.material.uniforms.uMode.value=mode==='iso'?1:0;this.dirty=true;}
+  volumeMode(mode){if(!this.volume)return;this.volume.mode=mode;this.volume.mesh.visible=mode!=='slices';this.volume.planes.forEach(p=>p.visible=mode==='slices'&&!this.resliceActive);this.volume.outlines.forEach(p=>p.visible=(mode==='slices'||Boolean(this.volume.guides))&&!this.resliceActive);this.volume.material.uniforms.uMode.value=mode==='iso'?1:0;this.dirty=true;}
+  volumeGuides(visible){if(this.volume){this.volume.guides=visible;this.volumeMode(this.volume.mode||'mip');}}
   sectionView(normal,point,reset=false){
     const up=Math.abs(normal.z)>.98?new THREE.Vector3(0,1,0):new THREE.Vector3(0,0,1);
     if(this.camera.isOrthographicCamera&&!reset){

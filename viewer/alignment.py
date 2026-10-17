@@ -5,6 +5,7 @@ from pathlib import Path
 import numpy as np
 
 from .preview import array, grid_matrix
+from .affine import matrix_product, transform_points, determinant3
 from .settings import _write_lock, read_settings, update_settings
 
 
@@ -15,8 +16,8 @@ def validate_pose(value):
     pivot = np.asarray(value.get('pivot'), dtype=float)
     if (rotation.shape != (3, 3) or pivot.shape != (3,) or
             not np.isfinite(rotation).all() or not np.isfinite(pivot).all() or
-            not np.allclose(rotation.T @ rotation, np.eye(3), atol=1e-8, rtol=0) or
-            not np.isclose(np.linalg.det(rotation), 1, atol=1e-8, rtol=0)):
+            not np.allclose(matrix_product(rotation.T, rotation), np.eye(3), atol=1e-8, rtol=0) or
+            not np.isclose(determinant3(rotation), 1, atol=1e-8, rtol=0)):
         raise ValueError('旋转矩阵必须为有效刚性旋转；镜像请使用独立的 XYZ 镜像开关')
     mirror = value.get('mirror', [False, False, False])
     if not isinstance(mirror, list) or len(mirror) != 3 or any(type(flag) is not bool for flag in mirror):
@@ -32,14 +33,14 @@ def pose_matrix(value):
         # Mirror the rotated dataset about fixed world axes through its pivot.
         linear = np.where(pose['mirror'], -1.0, 1.0)[:, None] * rotation
         matrix[:3, :3] = linear
-        matrix[:3, 3] = pivot - linear @ pivot
+        matrix[:3, 3] = pivot - transform_points(pivot, matrix)
     if not np.isfinite(matrix).all():
         raise ValueError('旋转中心超出可计算坐标范围')
     return matrix
 
 
 def transformed_bounds(low, high, matrix):
-    corners = np.array([(*p, 1) for p in itertools.product(*zip(low, high))]) @ matrix.T
+    corners = transform_points(np.array(list(itertools.product(*zip(low, high)))), matrix)
     return np.array([corners[:, :3].min(axis=0), corners[:, :3].max(axis=0)])
 
 

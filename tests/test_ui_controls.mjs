@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createViewControls} from '../viewer/web/view-controls.js';
-import {requestJson,requestPreview} from '../viewer/web/data-client.js';
+import {requestJson,requestPreview,requestErrorMessage} from '../viewer/web/data-client.js';
 import {viewHarness} from './view_harness.mjs';
 import {createPreviewPLY} from '../viewer/web/export-ply.js';
 
@@ -25,9 +25,38 @@ for(const fixture of fixtures){
   test(`preserve ${fixture.name}`,()=>{
     const h=viewHarness(fixture.input),controls=createViewControls(h);
     controls[fixture.action]();
-    assert.deepEqual(h.snapshot(),fixture.expected);
+    const actual=h.snapshot();
+    // RC4 intentionally shares complete-model rendering between 3D and MPR.
+    // Keep the historical layout/navigation contract; exercise the new render
+    // contract below instead of asserting the former slices-only behavior.
+    if(fixture.input.kind==='volume'){
+      assert.deepEqual(actual.mpr,fixture.expected.mpr);
+      assert.equal(actual.state.faceSection,fixture.expected.state.faceSection);
+      for(const id of ['section-controls','mpr-toggle','slice-fields','mpr-help'])if(fixture.expected.nodes[id])assert.deepEqual(actual.nodes[id],fixture.expected.nodes[id]);
+      if(actual.mpr.active&&(fixture.action==='toggleMPR'||fixture.input.mode==='mpr')){assert.ok(['mip','iso'].includes(actual.calls.findLast(c=>c[0]==='volumeMode')[1]));}
+    }else{
+      delete actual.nodes['mpr-render-field'];delete actual.nodes['mpr-render-mode'];
+      assert.deepEqual(actual,fixture.expected);
+    }
   });
 }
+
+test('MPR retains the complete 3D rendering mode and model display controls in both directions',()=>{
+  for(const mode of ['mip','iso']){
+    const h=viewHarness({kind:'volume',mode,active:false,renderer:true,preview:true,grid:true}),controls=createViewControls(h);
+    controls.updateVolumeMode();controls.toggleMPR();
+    assert.equal(h.mpr.active,true);assert.equal(h.state.volume3DMode,mode);
+    assert.deepEqual(h.snapshot().calls.filter(c=>c[0]==='volumeMode').at(-1),['volumeMode',mode]);
+    assert.equal(h.element('iso-field').hidden,mode!=='iso');assert.equal(h.element('mpr-render-mode').value,mode);
+    controls.show3D();assert.equal(h.mpr.active,false);assert.equal(h.element('volume-mode').value,mode);
+    assert.equal(h.element('show-grid').checked,true);
+  }
+});
+
+test('network failures explain the local service boundary without masking HTTP or numerical errors',()=>{
+  assert.match(requestErrorMessage(new TypeError('Failed to fetch')),/启动窗口.*退出/);
+  assert.equal(requestErrorMessage(new Error('切面位置超出数据范围')),'切面位置超出数据范围');
+});
 
 test('JSON requests preserve successful responses and HTTP error fallbacks',async()=>{
   const original=globalThis.fetch;

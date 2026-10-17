@@ -2,6 +2,7 @@
 import numpy as np
 
 from .preview import array, grid_matrix, packet
+from .affine import transform_points
 
 
 def source_volume(folder, meta, time_step):
@@ -40,6 +41,6 @@ def voxel_value(folder, meta, xyz, time_step=0):
     x, y, z = xyz
     # Text preserves uint64/int64 precision and explicitly identifies NaN/Inf.
     value = data[time_step, z, y, x].item()
-    world = grid_matrix(meta) @ np.array([x, y, z, 1.0])
+    world = transform_points([x, y, z], grid_matrix(meta))
     return {'xyz': xyz, 'time_step': time_step, 'value': str(value),
             'dtype': data.dtype.str, 'world_xyz': world[:3].tolist()}

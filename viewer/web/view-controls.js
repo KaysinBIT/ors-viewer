@@ -16,13 +16,18 @@ export function createViewControls({state, scene, mpr, element, updateSection}) 
   function updateVolumeMode() {
     const mode = element('volume-mode').value;
     const active = mode === VOLUME_MODES.mpr && state.object?.kind === 'volume';
+    if (state.object?.kind === 'volume' && (mode === VOLUME_MODES.projection || mode === VOLUME_MODES.surface)) state.volume3DMode = mode;
+    const renderMode = active ? (state.volume3DMode || VOLUME_MODES.projection) : mode;
     element('slice-fields').hidden = !active && mode !== VOLUME_MODES.slices;
-    element('iso-field').hidden = mode !== VOLUME_MODES.surface;
+    element('iso-field').hidden = renderMode !== VOLUME_MODES.surface;
     element('mpr-help').hidden = !active;
+    element('mpr-render-field').hidden = !active;
+    element('mpr-render-mode').value = state.volume3DMode || VOLUME_MODES.projection;
     applyMPRLayout(active);
     mpr.setStandalone?.(!active && mode === VOLUME_MODES.slices && mpr.kind === 'reslice');
-    scene?.volumeMode(active ? VOLUME_MODES.slices : mode);
-    scene?.showGrid(!active && element('show-grid').checked);
+    scene?.volumeGuides?.(active);
+    scene?.volumeMode(renderMode);
+    scene?.showGrid(element('show-grid').checked);
     if (state.preview?.meta.kind === 'volume') updateSection();
   }
 
@@ -41,7 +46,7 @@ export function createViewControls({state, scene, mpr, element, updateSection}) 
       updateMeshMode();
     } else if (state.object?.kind === 'volume' && element('volume-mode').value === VOLUME_MODES.mpr) {
       // Read the selected mode even while the preview is still loading.
-      element('volume-mode').value = VOLUME_MODES.projection;
+      element('volume-mode').value = state.volume3DMode || VOLUME_MODES.projection;
       updateVolumeMode();
     }
     scene?.perspective();
@@ -54,7 +59,9 @@ export function createViewControls({state, scene, mpr, element, updateSection}) 
       updateMeshMode();
       return;
     }
-    element('volume-mode').value = mpr.active ? VOLUME_MODES.projection : VOLUME_MODES.mpr;
+    const selected = element('volume-mode').value;
+    if (state.object?.kind === 'volume' && (selected === VOLUME_MODES.projection || selected === VOLUME_MODES.surface)) state.volume3DMode = selected;
+    element('volume-mode').value = mpr.active ? (state.volume3DMode || VOLUME_MODES.projection) : VOLUME_MODES.mpr;
     updateVolumeMode();
   }
 

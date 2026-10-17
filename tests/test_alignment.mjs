@@ -139,7 +139,7 @@ test('label MPR returns to 3D and restores pane navigation on repeated toggles',
 });
 test('aligned CT three-dimensional slice mode requests world planes without entering the four-pane layout',()=>{
   const h=viewHarness({kind:'volume',mode:'slices',active:true,renderer:true,preview:true,grid:true}),requests=[];
-  h.mpr.kind='reslice';h.mpr.id='ct';h.mpr.reslicePlanes={setActive(active){requests.push(['planes',active]);}};
+  h.mpr.kind='reslice';h.mpr.id='ct';h.mpr.reslicePlanes={setActive(active){requests.push(['planes',active]);},setDisplayMode(){}};
   h.mpr.position=xyz=>requests.push(['position',xyz]);h.mpr.setStandalone=MPRView.prototype.setStandalone;
   const controls=createViewControls(h);controls.updateVolumeMode();assert.equal(h.mpr.active,false);assert.equal(h.mpr.standalone,true);assert.ok(requests.some(r=>r[0]==='position'));
   h.element('volume-mode').value='mip';controls.updateVolumeMode();assert.equal(h.mpr.standalone,false);assert.deepEqual(requests.at(-1),['planes',false]);
@@ -160,6 +160,26 @@ test('reslice locator planes stay axis aligned and hide stale textures after mov
   planes.position([14,28,42]);assert.equal(planes.planes[0].visible,false);assert.equal(planes.planes[1].visible,true);assert.equal(planes.image(0,{width:99999,height:2}),false);
   planes.clear();assert.equal(planes.root.children.length,0);
   assert.doesNotThrow(()=>planes.position([0,0,0]),'cleared locators must not retain a stale grid');
+});
+
+test('MPR shows the same complete volume as 3D, with only locator outlines overlaid',()=>{
+  const volume={mesh:new THREE.Mesh(),planes:[new THREE.Mesh(),new THREE.Mesh(),new THREE.Mesh()],outlines:[new THREE.Line(),new THREE.Line(),new THREE.Line()],material:{uniforms:{uMode:{value:0}}}};
+  const view={volume,volumeMode:SceneView.prototype.volumeMode};
+  for(const mode of ['mip','iso']){
+    SceneView.prototype.volumeGuides.call(view,true);view.volumeMode(mode);
+    assert.equal(volume.mesh.visible,true);assert.ok(volume.planes.every(p=>!p.visible));assert.ok(volume.outlines.every(p=>p.visible));
+    assert.equal(volume.material.uniforms.uMode.value,mode==='iso'?1:0);
+    SceneView.prototype.volumeGuides.call(view,false);assert.equal(volume.mesh.visible,true);assert.ok(volume.outlines.every(p=>!p.visible));
+  }
+  view.volumeMode('slices');assert.equal(volume.mesh.visible,false);assert.ok(volume.planes.every(p=>p.visible));
+});
+
+test('aligned locator guides hide filled slices in MPR and restore them in explicit 3D slice mode',()=>{
+  const view={scene:new THREE.Scene(),bounds:new THREE.Box3(new THREE.Vector3(),new THREE.Vector3(10,10,10)),group:{scale:{x:.2}},theme:THEMES.ocean,renderer:{capabilities:{maxTextureSize:8192}}};
+  const planes=new ReslicePlanes(view);planes.source({shape_xyz:[10,10,10],spacing:[1,1,1],origin:[.5,.5,.5]});planes.setActive(true);planes.setDisplayMode('guides');planes.position([5,5,5]);
+  for(let axis=0;axis<3;axis++)planes.image(axis,{width:10,height:10});
+  assert.ok(planes.planes.every(p=>!p.visible));assert.ok(planes.edges.every(p=>p.visible));
+  planes.setDisplayMode('slices');assert.ok(planes.planes.every(p=>p.visible));planes.clear();
 });
 
 test('CT locator preview remains visible during full-resolution work and uses the transformed volume texture',()=>{

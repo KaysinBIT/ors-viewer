@@ -6,6 +6,7 @@ import {MeshSections} from './mesh-sections.js';
 import {meshPlaneTransform,meshToScreen,screenToMesh} from './mesh-sections-math.js';
 import {DEFAULT_THEME} from './themes.js';
 import {clampZoom,zoomImageTransform,zoomMeshTransform,panImageFocus,panMeshFocus} from './pane-view.js';
+import {requestErrorMessage} from './data-client.js';
 
 async function resliceRequest(id,action,body,signal){
   const response=await fetch(`/api/objects/${id}/${action}`,{method:'POST',signal,headers:{'Content-Type':'application/json','X-Viewer-Token':document.querySelector('meta[name=viewer-token]').content},body:JSON.stringify(body)});
@@ -62,10 +63,10 @@ export class MPRView {
         p.packet=packet;p.loadedKey=job.key;p.loadedGeneration=job.generation;const current=job.key===p.key;p.status.textContent=job.pose?`${Number(job.index.toPrecision(7))} · ${packet.meta.labels?'标签最近邻':'CT 线性采样'}${current?'':' · 更新中'}`:`${job.index} / ${this.shape[axis]-1} · ${current?'原始切片':'当前显示 · 更新中'}`;
         p.canvas.dataset.loadedIndex=job.index;p.canvas.dataset.time=job.time;p.canvas.dataset.source=job.pose?'reslice':'original';
         p.panel.classList.toggle('pending',!current);this.colorize(p);this.draw(p);this.recordFrame(p,job.index);
-      },error=>{p.status.textContent=error.message+(p.packet?' · 保留上一切面':'');p.panel.classList.add('pending');this.draw(p);},true);
+      },error=>{p.status.textContent=requestErrorMessage(error)+(p.packet?' · 保留上一切面':'');p.status.title=p.status.textContent;p.panel.classList.add('pending');this.draw(p);},true);
       new ResizeObserver(()=>this.draw(p)).observe(body);
       const locate=event=>{
-        if(!this.active||this.suspended||!p.transform||p.loadedGeneration!==this.generation)return;
+        if(!this.canLocate(p))return;
         const rect=canvas.getBoundingClientRect(),xy=this.kind==='mesh'?screenToMesh(p.transform,event.clientX-rect.left,event.clientY-rect.top):screenToIndices(p.transform,event.clientX-rect.left,event.clientY-rect.top);
         if(!xy)return;const next=this.indices.slice();
         next[u]=this.kind==='mesh'?xy[0]/this.meshSections.scale+this.meshSections.center[u]:this.worldIndex(u,xy[0]);
@@ -110,7 +111,7 @@ export class MPRView {
       this.readout.title=`原始 ${result.dtype} · 世界坐标 ${result.world_xyz.map(n=>Number(n.toPrecision(7))).join(', ')}（源坐标单位）`;
       this.readout.dataset.xyz=(job.pose?job.xyz:result.xyz).join(',');this.readout.dataset.value=result.value;
       this.readout.dataset.time=String(result.time_step);this.readout.dataset.object=job.id;
-    },error=>{this.readout.textContent=error.message;});
+    },error=>{this.readout.textContent=requestErrorMessage(error);});
     window.addEventListener('keydown',event=>{
       if(event.key==='Escape'&&this.maximizedAxis!==null&&!document.querySelector('dialog[open]')){
         event.preventDefault();this.setMaximized(null);
@@ -163,6 +164,7 @@ export class MPRView {
     if(this.readout)this.readout.textContent='正在计算新姿态的完整切面，暂时保留上一帧。';
   }
   worldIndex(axis,index){return this.kind==='reslice'?this.info.origin[axis]+index*this.info.spacing[axis]:index;}
+  canLocate(p){return Boolean(this.active&&!this.suspended&&p.transform&&(this.kind==='mesh'||p.loadedGeneration===this.generation));}
   pixelIndex(axis,value){return this.kind==='reslice'?(value-this.info.origin[axis])/this.info.spacing[axis]:value;}
   clamp(axis,value){const bounds=this.kind==='reslice'?this.info.bounds:this.meshSections?.bounds;return this.kind==='mesh'||this.kind==='reslice'?Math.max(bounds[0][axis],Math.min(bounds[1][axis],value)):clampIndex(value,this.shape[axis]);}
   step(axis){return this.kind==='reslice'?this.info.spacing[axis]:this.kind==='mesh'?(this.meshSections.bounds[1][axis]-this.meshSections.bounds[0][axis])/200:1;}
@@ -218,12 +220,13 @@ export class MPRView {
     this.meshSections?.setActive(active&&this.kind==='mesh');
     this.reslicePlanes?.setActive(active&&this.kind==='reslice');
     for(const p of this.panes)p.canvas.setAttribute('aria-label',`${AXES[p.axis]} ${this.kind==='mesh'?'网格截面':this.kind==='reslice'?'对齐切面':'原始切面'}，滚轮移动，左键定位，右键平移`);
-    if(this.scene?.camera.isPerspectiveCamera){this.scene.camera.zoom=active?(this.kind==='mesh'?1.05:1.6):1;this.scene.camera.updateProjectionMatrix();this.scene.dirty=true;}
+    this.reslicePlanes?.setDisplayMode(this.standalone?'slices':'guides');
+    if(this.scene)this.scene.dirty=true;
     this.readout.hidden=!active;document.getElementById('volume-3d-heading').hidden=!active;
     if(active&&this.id)this.position(this.indices);
     else if(!active){this.probe.reset();this.probeKey=null;for(const p of this.panes){p.queue.reset(this.kind!=='reslice');p.key=null;}}
   }
-  setStandalone(active){this.standalone=active;this.reslicePlanes?.setActive((active||this.active)&&this.kind==='reslice');if(active&&this.id)this.position(this.indices);}
+  setStandalone(active){this.standalone=active;this.reslicePlanes?.setDisplayMode(active?'slices':'guides');this.reslicePlanes?.setActive((active||this.active)&&this.kind==='reslice');if(active&&this.id)this.position(this.indices);}
   position(indices) {
     if(!this.id||this.suspended)return;this.indices=indices.map((x,i)=>this.clamp(i,x));
     if(!this.active&&!this.standalone)return;
@@ -321,7 +324,7 @@ export class MPRView {
       ctx.fillStyle=this.theme.header;ctx.fillRect(x,y,r.width,r.height);ctx.fillStyle=color;ctx.font='12px sans-serif';ctx.save();ctx.beginPath();ctx.rect(x+5,y,r.width-10,28);ctx.clip();ctx.fillText(title,x+8,y+18);ctx.restore();
       ctx.drawImage(source,im.left-rect.left,im.top-rect.top,im.width,im.height);if(footer){ctx.fillStyle=this.theme.text;ctx.font='11px sans-serif';ctx.fillText(footer,x+8,y+r.height-10);}};
     for(const p of this.visiblePanes())draw(p.panel,p.canvas,p.title.textContent+' '+p.status.textContent,this.theme.axes[p.axis],`缩放 ${Math.round(p.zoom*100)}%${this.kind==='mesh'?' · '+({line:'仅截线',fill:'填充',both:'填充 + 轮廓'})[this.fillMode]:''}`);
-    if(this.maximizedAxis===null)draw(document.getElementById('canvas-wrap'),this.scene.canvas,'3D · 三切面空间定位',this.theme.text);
+    if(this.maximizedAxis===null)draw(document.getElementById('canvas-wrap'),this.scene.canvas,'3D · 完整模型与切面定位',this.theme.text);
     ctx.fillStyle=this.theme.text;ctx.font='12px sans-serif';ctx.fillText(this.readout.textContent,8,rect.height+18);
     return canvas.toDataURL('image/png');
   }

@@ -3,6 +3,7 @@ import numpy as np
 
 from .alignment import pose_matrix, transformed_bounds
 from .preview import array, grid_matrix, packet
+from .affine import matrix_product, inverse_affine, transform_points
 
 MAX_PLANE_PIXELS = 16_777_216
 CHUNK_PIXELS = 131072
@@ -16,13 +17,13 @@ def geometry(meta, pose):
     shape = np.asarray(meta['grid']['shape_tzyx'], dtype=np.int64)
     if shape.shape != (4,) or np.any(shape <= 0):
         raise ValueError('无效的体素维度')
-    matrix = pose_matrix(pose) @ grid_matrix(meta)
+    matrix = matrix_product(pose_matrix(pose), grid_matrix(meta))
     if not np.allclose(matrix[3], [0, 0, 0, 1]):
         raise ValueError('体素空间矩阵必须为仿射变换')
-    inverse = np.linalg.inv(matrix)
+    inverse = inverse_affine(matrix)
     bounds = transformed_bounds(np.full(3, -.5), shape[:0:-1] - .5, matrix)
     # One source-voxel distance along each fixed world axis; no automatic reduction.
-    spacing = 1 / np.linalg.norm(inverse[:3, :3], axis=0)
+    spacing = 1 / np.sqrt(np.sum(inverse[:3, :3]**2, axis=0))
     counts = np.maximum(1, np.ceil((bounds[1] - bounds[0]) / spacing - 1e-10))
     if (not np.isfinite(inverse).all() or not np.isfinite(bounds).all() or
             not np.isfinite(spacing).all() or np.any(spacing <= 0) or
@@ -70,7 +71,7 @@ class Sampler:
         return result
 
     def sample(self, world):
-        xyz = world @ self.inverse[:3, :3].T + self.inverse[:3, 3]
+        xyz = transform_points(world, self.inverse)
         valid = ((xyz >= -.5 - 1e-9) & (xyz <= np.array(self.shape[:0:-1]) - .5 + 1e-9)).all(axis=1)
         if self.labels:
             values = np.asarray(self.nearest(xyz), dtype='<u4')
@@ -120,7 +121,7 @@ def reslice_probe(folder, meta, pose, world, time=0):
     if world.shape != (3,) or not np.isfinite(world).all(): raise ValueError('定位坐标无效')
     sampler = Sampler(folder, meta, pose, time)
     values, valid, _ = sampler.sample(world[None])
-    xyz = sampler.inverse[:3, :3] @ world + sampler.inverse[:3, 3]
+    xyz = transform_points(world, sampler.inverse)
     return {'xyz': xyz.tolist(), 'world_xyz': world.tolist(), 'time_step': time,
             'value': str(sampler.nearest(xyz[None])[0].item()) if valid[0] else '范围外',
             'sampled_value': str(values[0].item()) if valid[0] else '范围外',

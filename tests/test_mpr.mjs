@@ -47,6 +47,13 @@ test('pose changes retain the last valid pixels while invalidating requests and 
   assert.ok(panes.every(p=>p.packet===null),'frames must never leak between datasets');
 });
 
+test('mesh navigation is not gated on volume frame generations',()=>{
+  const view={active:true,suspended:false,kind:'mesh',generation:4};
+  assert.equal(MPRView.prototype.canLocate.call(view,{transform:{}}),true);
+  view.kind='reslice';assert.equal(MPRView.prototype.canLocate.call(view,{transform:{},loadedGeneration:3}),false);
+  assert.equal(MPRView.prototype.canLocate.call(view,{transform:{},loadedGeneration:4}),true);
+});
+
 test('retained images use their own dimensions and affine until the new pose arrives',()=>{
   const savedWindow=globalThis.window,transforms=[],drawn=[],canvas={dataset:{},getContext:()=>context};
   const context={setTransform(){},fillRect(){},save(){},restore(){},transform(...v){transforms.push(v);},drawImage(image){drawn.push(image);}};
@@ -135,12 +142,15 @@ test('leaving MPR restores the four-pane layout before the 3D view is shown',()=
   const body={dataset:{},classList:{toggle(){}}},heading={};
   globalThis.document={body,getElementById:()=>heading};
   Object.assign(view,{kind:'mesh',id:null,readout:{},probe:{reset(){}},scene:{camera:{isPerspectiveCamera:true,zoom:1,updateProjectionMatrix(){}}}});
+  view.scene.camera.zoom=1.75;
   for(const p of view.panes){p.canvas={setAttribute(){}};p.queue={reset(){}};}
   try{
     view.setMaximized(2);MPRView.prototype.setActive.call(view,false);
     assert.equal(view.maximizedAxis,null);assert.equal(view.active,false);assert.equal(view.readout.hidden,true);
     assert.equal(view.layout.classList.values.has('mpr-maximized'),false);
+    assert.equal(view.scene.camera.zoom,1.75);
     MPRView.prototype.setActive.call(view,true);
+    assert.equal(view.scene.camera.zoom,1.75);
     assert.equal(view.visiblePanes().length,3);assert.equal(view.maximizedAxis,null);assert.deepEqual(view.panes.map(p=>p.zoom),[1,2,3]);
   }finally{globalThis.document=oldDocument;}
 });

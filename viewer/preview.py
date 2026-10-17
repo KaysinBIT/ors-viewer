@@ -7,6 +7,7 @@ import struct
 import threading
 
 import numpy as np
+from .affine import transform_points
 
 QUALITY = {'fast': 64, 'balanced': 112, 'fine': 176}
 PREVIEW_VERSION = 3
@@ -255,7 +256,7 @@ def label_preview(folder, meta, resolution, label_id=0):
             quad[:, 1, a] = highs[:, a];quad[:, 2, a] = highs[:, a]
             quad[:, 2, b] = highs[:, b];quad[:, 3, b] = highs[:, b]
             xyz = quad[:, :, ::-1]
-            world = xyz @ matrix[:3, :3].T + matrix[:3, 3]
+            world = transform_points(xyz, matrix)
             positions.append(world.astype('<f4'))
             ids.append(sampled[tuple(idx.T)])
             if sum(len(p) for p in positions) > 1000000:
@@ -299,8 +300,8 @@ def volume_preview(folder, meta, resolution, time_step=0):
     matrix = grid_matrix(meta)
     nx, ny, nz = map(int, data.shape[:0:-1])
     local_to_world = np.eye(4)
-    local_to_world[:3, :3] = matrix[:3, :3] @ np.diag([nx, ny, nz])
-    local_to_world[:3, 3] = matrix[:3, 3] + matrix[:3, :3] @ ((np.array([nx, ny, nz]) - 1) / 2)
+    local_to_world[:3, :3] = matrix[:3, :3] * np.array([nx, ny, nz])
+    local_to_world[:3, 3] = transform_points((np.array([nx, ny, nz]) - 1) / 2, matrix)
     return packet({'kind': 'volume', 'sample_shape_zyx': list(texture.shape),
                    'original_shape_tzyx': list(data.shape), 'time_step': time_step,
                    'range': [lo, hi], 'window': limits, 'matrix': local_to_world.tolist(),

@@ -1,3 +1,10 @@
+export function requestErrorMessage(error){
+  const message=error?.message||String(error);
+  return /failed to fetch|fetch failed|networkerror|load failed/i.test(message)
+    ? '无法连接本地服务。请检查软件启动窗口是否已退出；重新启动后，请从启动窗口打开新的网页地址。'
+    : message;
+}
+
 export async function requestJson(path, options) {
   const response = await fetch(path, options);
   if (response.ok) return response.json();
