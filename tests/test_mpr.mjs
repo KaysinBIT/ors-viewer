@@ -33,6 +33,32 @@ test('each pane retains its own zoom during time changes and resets on another o
   view.resetPane(view.panes[1]);assert.deepEqual(view.panes.map(p=>p.zoom),[2,1,4]);
   MPRView.prototype.source.call(view,'new',{grid:{shape_tzyx:[1,3,4,5]}},0,[1,1,1]);assert.deepEqual(view.panes.map(p=>p.zoom),[1,1,1]);assert.ok(view.panes.every(p=>p.focus===null));
 });
+
+test('pose changes retain the last valid pixels while invalidating requests and point picking',()=>{
+  const panes=[0,1,2].map(axis=>({axis,packet:{meta:{shape_yx:[12,7]}},loadedKey:'previous',key:'previous',loadedGeneration:1,focus:[3,6],zoom:2,transform:{},status:{},panel:{classList:{add(){}}},queue:{reset(cancel){assert.equal(cancel,false);}}}));
+  const packets=panes.map(p=>p.packet),view={id:'volume',time:0,kind:'volume',generation:1,active:true,panes,probe:{reset(){}},readout:{},draw(){},position(){assert.equal(this.suspended,true);},reslicePlanes:{source(){},setActive(){}},meshSections:{clear(){}}};
+  MPRView.prototype.beginReslice.call(view);assert.equal(view.suspended,true);assert.deepEqual(panes.map(p=>p.packet),packets);assert.ok(panes.every(p=>p.transform===null));
+  const info={shape_xyz:[20,24,30],bounds:[[0,0,0],[20,24,30]]};
+  MPRView.prototype.resliceSource.call(view,'volume',info,{enabled:true},0,[10,12,15]);
+  assert.deepEqual(panes.map(p=>p.packet),packets);assert.ok(panes.every(p=>p.loadedGeneration!==view.generation));
+  assert.ok(panes.every(p=>p.zoom===2));assert.equal(MPRView.prototype.ready.call(view),false);
+  view.active=false;
+  MPRView.prototype.resliceSource.call(view,'different-volume',info,{enabled:true},0,[10,12,15]);
+  assert.ok(panes.every(p=>p.packet===null),'frames must never leak between datasets');
+});
+
+test('retained images use their own dimensions and affine until the new pose arrives',()=>{
+  const savedWindow=globalThis.window,transforms=[],drawn=[],canvas={dataset:{},getContext:()=>context};
+  const context={setTransform(){},fillRect(){},save(){},restore(){},transform(...v){transforms.push(v);},drawImage(image){drawn.push(image);}};
+  const p={axis:2,zoom:1,focus:null,canvas,image:{width:7,height:12},body:{getBoundingClientRect:()=>({width:400,height:300})},packet:{meta:{shape_yx:[12,7],voxel_xyz_to_world:[[.00004,0,0,0],[0,.00004,0,0],[0,0,.00004,0],[0,0,0,1]]}},loadedGeneration:1,loadedKey:'old',key:'new'};
+  const view={active:true,id:'volume',kind:'reslice',generation:2,suspended:true,shape:[100,300,100],theme:{canvas:'#000'},paneFocus:MPRView.prototype.paneFocus};
+  globalThis.window={devicePixelRatio:1};
+  try{
+    MPRView.prototype.draw.call(view,p);assert.equal(drawn[0],p.image);
+    const [a,,c,d,e,f]=transforms[0];assert.ok(Math.abs(e+a*3.5+c*6-200)<1e-8);assert.ok(Math.abs(f+d*6-150)<1e-8);
+    assert.equal(p.transform,null,'stale images must not be interpreted in the new coordinate system');
+  }finally{globalThis.window=savedWindow;}
+});
 test('three planes invert every voxel center including anisotropy, shear, rotation and edges',()=>{
   for(let axis=0;axis<3;axis++){
     const t=planeTransform(shape,matrix,axis,400,300),[u,v]=IN_PLANE[axis];

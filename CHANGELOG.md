@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0RC3 (local fix candidate)
+
+- Keep the last valid 2D planes visible while a new orientation is calculated. Retained frames use their own dimensions and affine, with pending status and point-picking protection.
+- Render immediate fixed-axis CT locator slices from the existing user-selected preview texture, then replace them with full-resolution slices. Do not change or downsample source arrays.
+- Include pose generations in slice keys and clear stale locator metadata on resource cleanup.
+- Add focused delayed-update, image-aspect and preview-texture lifecycle regression tests. Browser page verification remains pending.
+
 ## 1.2.0RC2 (prerelease)
 
 - Add independent X/Y/Z dataset mirror switches, applied after rotation about the shared dataset pivot. Meshes, CT and segmentation use the same transform for rendering and sections.

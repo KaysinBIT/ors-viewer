@@ -159,4 +159,27 @@ test('reslice locator planes stay axis aligned and hide stale textures after mov
   }
   planes.position([14,28,42]);assert.equal(planes.planes[0].visible,false);assert.equal(planes.planes[1].visible,true);assert.equal(planes.image(0,{width:99999,height:2}),false);
   planes.clear();assert.equal(planes.root.children.length,0);
+  assert.doesNotThrow(()=>planes.position([0,0,0]),'cleared locators must not retain a stale grid');
+});
+
+test('CT locator preview remains visible during full-resolution work and uses the transformed volume texture',()=>{
+  const group=new THREE.Group(),volumeMesh=new THREE.Mesh(),data=new THREE.Data3DTexture(new Uint8Array(8),2,2,2);volumeMesh.matrixAutoUpdate=false;group.add(volumeMesh);
+  const view={scene:new THREE.Scene(),group,sourceBounds:new THREE.Box3(new THREE.Vector3(-.02,-.03,-.04),new THREE.Vector3(.02,.03,.04)),alignment:new THREE.Matrix4(),
+    volume:{mesh:volumeMesh,planes:[],outlines:[],meta:{matrix:[[.04,0,0,0],[0,.06,0,0],[0,0,.08,0],[0,0,0,1]]},common:{uData:{value:data},uWindow:{value:new THREE.Vector2(0,1)},uOpacity:{value:1}}},
+    grid:new THREE.Group(),axes:new THREE.Group(),theme:THEMES.ocean,renderer:{capabilities:{maxTextureSize:8192}}};view.scene.add(group);
+  const planes=new ReslicePlanes(view);let disposed=0;data.addEventListener('dispose',()=>disposed++);
+  for(const angles of [[1,0,0],[0,90,0],[20,30,40]]){
+    SceneView.prototype.setAlignment.call(view,poseMatrix({enabled:true,rotation:rotationFromAngles(angles),pivot:[0,0,0],mirror:[true,false,false]}));
+    const low=view.bounds.min.toArray(),high=view.bounds.max.toArray(),spacing=low.map((x,i)=>(high[i]-x)/10),info={shape_xyz:[10,10,10],spacing,origin:low.map((x,i)=>x+spacing[i]/2)};
+    planes.source(info);planes.setActive(true);planes.position([0,0,0]);view.scene.updateMatrixWorld(true);
+    assert.equal(planes.fallbacks.filter(p=>p.visible).length,3);assert.ok(planes.planes.every(p=>!p.visible));
+    for(let axis=0;axis<3;axis++){
+      const fallback=planes.fallbacks[axis],uniforms=fallback.material.uniforms;
+      assert.equal(uniforms.uData,view.volume.common.uData);
+      const center=new THREE.Vector3().applyMatrix4(fallback.matrixWorld).applyMatrix4(uniforms.uWorldToVolume.value);close(center.toArray(),[0,0,0]);
+      assert.equal(planes.image(axis,{width:10,height:10}),true);assert.equal(fallback.visible,false);assert.equal(planes.planes[axis].visible,true);
+    }
+    planes.position([spacing[0],0,0]);assert.equal(planes.fallbacks[0].visible,true);assert.equal(planes.planes[0].visible,false);assert.equal(planes.planes[1].visible,true);
+  }
+  planes.clear();assert.equal(disposed,0,'the locator must not dispose the shared CT volume texture');assert.equal(planes.info,null);data.dispose();
 });

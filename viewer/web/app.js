@@ -254,9 +254,7 @@ async function setupReslice(snap=null){
   const objectId=state.object.id,revision=state.alignmentRevision=(state.alignmentRevision||0)+1;
   state.alignmentAbort?.abort();const controller=state.alignmentAbort=new AbortController();
   const pose=structuredClone(state.alignment),previous=mpr.id===objectId&&mpr.kind==='reslice'?mpr.indices.slice():null;
-  mpr.suspended=true;mpr.reslicePlanes?.clear();mpr.probe.reset(false);
-  for(const p of mpr.panes){p.queue.reset(false);p.packet=null;p.key=null;p.loadedKey=null;p.transform=null;p.status.textContent='更新对齐坐标…';mpr.draw(p);}
-  if(scene.volume)for(const p of [...scene.volume.planes,...scene.volume.outlines])p.visible=false;
+  mpr.beginReslice();
   try{
     const info=await api(`/api/objects/${objectId}/reslice-info`,{method:'POST',signal:controller.signal,headers:{'Content-Type':'application/json','X-Viewer-Token':token()},body:JSON.stringify({pose})});
     if(revision!==state.alignmentRevision||state.object?.id!==objectId)return;
@@ -265,13 +263,13 @@ async function setupReslice(snap=null){
     mpr.resliceSource(objectId,info,pose,state.object.kind==='volume'?Number($('time-step').value||0):0,coordinates);mpr.suspended=false;
     if(state.object.kind==='volume'){
       setCoordinateRanges('slice',info.bounds);setSlicePosition(coordinates);updateVolumeMode();scene.iso(Number($('iso').value)/PERCENT_SCALE);
-      $('mpr-help').textContent='XYZ 为固定世界轴，位置单位沿用源数据。CT 灰度按线性插值显示；原始体素数据保持不变。';
+      $('mpr-help').textContent='XYZ 为固定世界轴，位置单位沿用源数据。三维先按当前预览精度显示切片，完整切面到达后替换；二维更新期间保留上一帧并标记状态。';
     }else{setCoordinateRanges('mesh',info.bounds);updateMeshPosition(coordinates);updateMeshMode();}
     if(snap&&!mpr.active)viewControls.toggleMPR();
     mpr.position(coordinates);
   }catch(error){
     if(error.name==='AbortError')return;
-    if(revision===state.alignmentRevision){mpr.id=null;mpr.suspended=true;for(const p of mpr.panes)p.status.textContent=error.message;throw error;}
+    if(revision===state.alignmentRevision){mpr.suspended=true;for(const p of mpr.panes)p.status.textContent=error.message+(p.packet?' · 保留上一切面':'');throw error;}
   }
 }
 async function applyAlignment(pose,snap=null){
