@@ -1,147 +1,175 @@
-# Changelog
+# ORS Viewer 更新日志
 
-## 1.2.0RC6 (local update candidate)
+本日志覆盖首次独立发行 0.6.0 至 1.2.0RC6。首次发行前的解析、显示和导入功能归入 0.6.0。RC3–RC5 为本地候选版，未单独创建公开发行页，其改动全部包含在 RC6 中；RC5 的桌面打包修订单独列明。
 
-- Add explicit per-axis XYZ volume sampling counts, an Apply action, sample totals and texture-size estimates. Retain fast/balanced/fine and full-resolution modes.
-- Uniformly select exactly the requested number of source voxels, including axis endpoints (center for a single sample), without changing world bounds, source arrays or original 2D slices.
-- Stream custom textures in bounded chunks, separate caches by counts/time, and reject invalid counts or resource limits without silently changing the selection.
-- Preserve bundled Tk desktop validation; extend numerical, HTTP and frontend-state coverage and the offline manual.
+历史条目描述各版本引入的行为，当前功能以后续修复和调整为准。RC 表示候选版本，不代表已完成全部浏览器和显卡验收。
 
-## 1.2.0RC5 (local update candidate)
+## 1.2.0RC6 — 公开预发行版
 
-- Rebuild the Windows desktop package with tkinter and Tcl/Tk included. Fail the build if desktop dependencies are unavailable; verify the actual frozen launcher widgets and manual service start/stop before producing a ZIP.
-- Add synchronized numeric azimuth/elevation inputs with fractional degrees and range validation.
-- Add cursor-centered Ctrl + wheel zoom to each CT, aligned and mesh section, in four-pane and maximized layouts. Keep ordinary wheel slice navigation.
-- Reduce aligned CT interpolation temporaries and skip empty pixels, preserving full-resolution pixels, masks and zero-weight NaN behavior. Retain BLAS-free concurrent computation.
-- Add an explicit full-resolution volume preview option. Stream every source voxel into an 8-bit display texture, retain the original spatial dimensions, and use voxel-sized ray steps. Check hardware/buffer limits and report failures without reducing resolution automatically; source precision is unchanged.
-- Extend numerical, UI-state and texture-resource regression coverage and update the offline manual. Browser/GPU visual verification remains pending.
+### 本版新增
 
-## 1.2.0RC4 (local fix candidate)
+- **自定义三维体数据抽样量**：在“预览精度”中选择“自定义抽样”，分别输入 X、Y、Z 体素数量，点击“应用抽样”或按 Enter 生效。首次各轴默认最多 128 个。
+- **明确显示抽样规模**：显示指定尺寸、体素总量、预计 8 位纹理大小及实际载入尺寸；修改中的数值标记为“待应用”。
+- **精确控制数量**：各轴均匀选取指定数量的原始体素并包含两端；单轴仅取 1 个时使用中心体素。拒绝零、负数、小数及超过原始维度的数量。
+- **保留预览选择**：快速、均衡、精细、全分辨率仍可使用。自定义抽样只影响三维纹理，不改变原始数组、世界坐标范围和二维三切面分辨率。
+- **分块生成与缓存隔离**：大纹理分块生成以限制临时内存；不同 XYZ 数量和时间步使用独立缓存。超过显卡尺寸、单纹理 2 GiB 限制或上传失败时明确报错，不自动降低用户设置的数量。
+- 更新离线 HTML / PDF 使用说明；保留已修复的 tkinter / Tcl/Tk 打包检查。
 
-- Remove BLAS/LAPACK calls from spatial transforms, preview coordinate conversion and reslicing to prevent the Windows native access violation reproduced under concurrent slice requests. Preserve interpolation, source arrays and coordinate units.
-- Show the complete CT model in MPR, with locator outlines. Share maximum-intensity-projection / isosurface selection and display settings with the independent 3D view; keep explicit 3D slice mode available.
-- Explain disconnected local-service requests and restore mesh crosshair navigation after the prior frame-generation guard.
-- Add affine, concurrent-packet and shared-rendering regressions. Browser page verification remains pending.
+### 相对上次公开版本 RC2 的累计改动
 
-## 1.2.0RC3 (local fix candidate)
+- 修复初始姿态变化期间切面消失、旧帧被错误解释，以及并发切片计算导致软件退出、网页出现 `Failed to fetch` 的问题。
+- 三切面中的三维窗口显示完整模型，与独立 3D 视图共享最大强度投影 / 等值面及显示参数。
+- 增加剖面方位角、俯仰角数值输入，以及各二维切面的 Ctrl + 滚轮鼠标中心缩放。
+- 优化旋转后 CT 插值计算，增加三维体数据全分辨率和自定义抽样选项。
+- 补齐 Windows 桌面运行依赖，阻止遗漏 tkinter / Tcl/Tk 的构建产物进入发行包。
 
-- Keep the last valid 2D planes visible while a new orientation is calculated. Retained frames use their own dimensions and affine, with pending status and point-picking protection.
-- Render immediate fixed-axis CT locator slices from the existing user-selected preview texture, then replace them with full-resolution slices. Do not change or downsample source arrays.
-- Include pose generations in slice keys and clear stale locator metadata on resource cleanup.
-- Add focused delayed-update, image-aspect and preview-texture lifecycle regression tests. Browser page verification remains pending.
+### 验证与使用边界
 
-## 1.2.0RC2 (prerelease)
+- 233 项自动测试通过（89 项 Python、144 项 JavaScript），覆盖数值采样、接口、资源限制、缓存、切面定位和视图切换。
+- Windows 发行包已验证真实 Tk 启动窗口、手动启动 / 停止服务以及从包内加载 Tcl/Tk；已验证实际 CT 三组自定义抽样尺寸与抽查数值，原文件校验值不变。
+- **浏览器交互及显卡实际显示的视觉验收尚未完成**，接口或自动测试结果不等同于视觉验收通过。
+- 三维显示纹理为 8 位；“全分辨率”保留原始空间体素尺寸，不表示将原始灰度位宽直接传入显示纹理。源文件位宽、原始读数和导出数据保持不变。
+- 完整解压 Windows ZIP 后运行 `ORSViewer.exe`，保持 `_internal` 文件夹与 EXE 在一起；首次启动手动配置端口和数据目录，再点击按钮打开网页。
 
-- Add independent X/Y/Z dataset mirror switches, applied after rotation about the shared dataset pivot. Meshes, CT and segmentation use the same transform for rendering and sections.
-- Preserve mirrors during face/three-point alignment; save and restore them with pose preferences. Legacy rotation-only settings remain compatible. Reset clears both rotation and mirrors.
-- Make file selection the first and default import mode; retain local-path and decoded-directory import.
-- Default to the ocean (deep blue) theme across 3D/MPR and the initial page; retain explicitly saved theme preferences.
-- Keep source arrays and PLY exports unchanged. 210 automated tests pass; browser visual acceptance is not performed for this release.
+## 1.2.0RC5 — 本地候选版，包含桌面打包修订
 
-## 1.2.0rc1 (candidate)
+### 功能与性能
 
-- Add dataset-wide rigid orientation with a shared source-space pivot, manual XYZ angles, quarter-turn buttons, reference faces and three-point alignment.
-- Keep XYZ slicing axes fixed; rotate mesh intersection planes back into source space without changing or reducing the original mesh.
-- Reslice CT with linear interpolation and dense/sparse segmentation with nearest-neighbour label IDs; synchronize world-axis 3D locator planes.
-- Save alignment preferences separately and restore the original pose. Source arrays, measurement tables and PLY exports remain unchanged.
-- Extend automated coverage and the offline manual. Browser interaction and visual acceptance remain pending.
+- **精确剖面角度**：方位角、俯仰角增加数值框，与滑块双向同步，支持小数角度和边界校验。
+- **鼠标中心缩放**：三个二维切面支持 Ctrl + 滚轮缩放，鼠标指向的图像 / 网格位置保持不动；四视图与单面最大化均生效，普通滚轮仍移动切面。
+- **旋转切片加速**：减少三线性插值中的重复临时数组，跳过模型外像素，缩小并发计算分块；保留完整分辨率、像素掩膜、标签精度及零权重 NaN 处理。
+- **全分辨率三维预览**：按原始体素尺寸载入全部体素，分块生成 8 位纹理，沿视线按纹理体素尺度采样。显卡限制或上传失败时提示错误，不自动降采样。
+- 明确全分辨率的内存 / 显存开销，更新使用说明；浏览器 / GPU 视觉验收未完成。
 
-## 1.1.0
+### Windows 桌面修订包
 
-- Fill arbitrary-angle mesh and segmentation sections, preserving holes and rejecting unverified contours.
-- Add line/fill/outline choices and fill opacity; discard stale caps during movement without modifying source geometry.
-- Add per-plane maximize/restore buttons and Escape restoration for volume and mesh MPR.
-- Preserve pane position, zoom and pan; export the visible maximized plane in screenshots.
-- Update the offline manual. Automated tests pass; browser visual acceptance has not been completed.
+- 修复初始 RC5 包遗漏 `tkinter / Tcl/Tk` 导致 `No module named 'tkinter'`、启动窗口无法打开的问题。
+- 构建前检查桌面依赖，缺失或不可初始化时直接中止；采用清理过的独立构建目录，避免沿用遗漏依赖的分析结果。
+- 打包后使用真实 Tk 控件检查启动窗口、手动启动 / 停止服务，并确认 Tcl/Tk 从包内加载；检查失败不生成发行 ZIP。
+- 修订只补齐桌面依赖和构建校验，不改变 RC5 的模型、切面和导入功能。
 
-## 1.0.0
+## 1.2.0RC4 — 本地修复候选版
 
-- Stable release retaining the v0.9.1RC2 file formats, UI operations and numerical algorithms.
-- Centralize 3D/MPR mode transitions and extract request, PLY export and UI constants modules.
-- Split preview loading, object reset and measurement table rendering into focused functions.
-- Separate HTTP object, settings and upload handlers while preserving authorization, errors and limits.
-- Add pre-refactor state and binary export characterization tests; verify mesh, volume and label workflows.
-- Retain manual desktop startup, complete original meshes and independent parsing without Dragonfly.
+- **修复并发计算退出**：移除空间变换、预览坐标转换和重切片中的 BLAS / LAPACK 调用，避免 Windows 打包程序在并发切片时触发本机库访问异常。
+- 保持 CT 线性插值、分割最近邻标签、原始坐标单位及源数组不变。
+- **统一三维展示**：三切面的 3D 区域显示完整 CT 模型和定位轮廓，与独立 3D 视图共享最大强度投影 / 等值面及显示参数；保留单独的“三维切片定位”模式。
+- 网络连接失败时提示检查本地服务是否退出；恢复网格三切面十字线定位，避免体数据帧代次校验误阻止网格交互。
+- 增加小型仿射变换、并发切面数据包和渲染模式共享回归测试。
 
-## 0.9.1RC2
+## 1.2.0RC3 — 本地修复候选版
 
-- Make the 3D button exit the three-plane layout for both meshes and volumes, synchronizing the mode controls and hiding section panes.
-- Return volume MPR to 3D maximum-intensity projection; preserve section positions and per-pane zoom when reopening MPR.
-- Preserve the manual desktop startup workflow from 0.9.1RC.
+- **姿态更新时保留切面**：新姿态计算期间继续显示上一张有效切面，并标记更新状态，避免切面突然消失。
+- 旧帧按自身尺寸和空间变换显示；新帧到达前禁止把旧帧中的选点误解释为新姿态坐标，也不叠加新姿态十字线。
+- 三维切片定位先使用当前预览纹理提供反馈，完整切片到达后替换；不重写或降低原始数组分辨率。
+- 切片请求加入姿态代次，丢弃过期响应并清理失效定位资源；增加延迟更新、图像比例和资源生命周期回归测试。
 
-## 0.9.1RC
+## 1.2.0RC2 — 历史公开版本
 
-- Configure the port and data folder in the desktop launcher before starting the local service.
-- Open the 3D page only when the user clicks the browser button; startup never opens it automatically.
-- Default the first data folder to the executable directory and retain saved selections.
-- Add folder selection, explicit stop/reconfigure controls, validation messages and startup guidance.
-- Keep command-line overrides temporary and preserve loopback-only listening.
-- Publish as a release candidate (Python package version 0.9.1rc1) and update offline manuals.
+- **整个数据集镜像**：新增 X / Y / Z 独立镜像开关，可组合使用；先旋转，再关于经过数据集中心的固定轴平面镜像，网格、CT、分割共用变换。
+- 镜像同步用于 3D、三切面和任意剖面并保留截面填充；选面 / 三点自动对齐保留镜像选择。
+- 姿态与镜像一起保存；恢复原始姿态同时清除两者，兼容 RC1 保存的旋转配置。
+- **导入方式调整**：“选择文件”排第一并作为默认方式，保留本地路径和已有解析目录导入。
+- **默认深蓝配色**：3D 与三切面统一，升级前主动保存的配色继续保留。
+- 原始网格不自动简化，原文件、完整标签 ID、测量表和源坐标 PLY 不变；更新离线说明书。
 
-## 0.9.0
+## 1.2.0rc1 — 历史候选版（保留 Git 标签）
 
-- Add independent 25–800% zoom sliders, right-button panning, crosshair centering and fit controls to all three 2D planes.
-- Add line, fill and fill-with-outline mesh section modes with adjustable fill opacity.
-- Preserve holes and nested islands; reject open, branched, self-intersecting or ambiguous contours instead of inventing a fill.
-- Refresh sections continuously during movement using spatial candidate indexing and cached unchanged planes, without decimation.
-- Publish contour frames before fill validation and label displayed positions when computation trails input.
-- Preserve zoom, pan and fill appearance in four-window screenshots and update the offline manuals.
+- **整个数据集初始姿态**：对象共用旋转中心和刚性变换，保持原有相对位置；三切面的 XYZ 参考轴固定。
+- 支持 XYZ 角度滑块、精确输入、±90°、选择参考三角面及三个参考点对齐到 XY / XZ / YZ，并同步参考切面位置。
+- CT 切面采用原始体素线性插值；分割采用最近邻并保留完整标签 ID，支持稠密和稀疏分割。
+- 三维、三切面、三维切片定位和任意剖面共用姿态；快速调整时限制计算堆积并丢弃过期结果。
+- 对齐参数单独保存，可恢复原始姿态；不改写原文件、测量表和源坐标导出，不执行对象之间的自动配准。
+- 保留截面填充、孔洞、切面最大化、缩放和模式切换，更新离线说明书。
 
-## 0.8.1
+## 1.1.0 — 正式版
 
-- Release retained mesh packet references when leaving mesh views or switching to volume data, reducing memory use after viewing large meshes.
-- Include all mesh three-plane and unified theme features from 0.8.0.
+- **任意剖面填充**：网格和分割表面截面支持仅截线、填充、填充加轮廓及透明度调整；保留内部孔洞，拒绝未通过校验的闭环。
+- 移动时丢弃旧位置填充，保留截线反馈，不修改原始几何。
+- **每个切面单独最大化**：CT 和网格切面均有最大化 / 还原按钮，Esc 返回四窗口。
+- 保留切面位置、缩放和平移；截图保存当前可见布局，单面最大化时只导出该切面。
+- 更新 HTML / PDF 使用说明。浏览器视觉验收未完成。
 
-## 0.8.0
+## 1.0.0 — 正式版
 
-- Extend linked three-plane views to STL and ORS triangle meshes with exact plane intersections of the displayed geometry.
-- Add crosshair navigation, wheel and keyboard movement, source-coordinate inputs and synchronized 3D locators for meshes.
-- Compute mesh contours in a background worker without automatic mesh reduction; handle coplanar triangles explicitly.
-- Unify 3D and three-plane palettes with persistent monochrome, light and ocean themes.
-- Apply shared colors to backgrounds, solid mesh materials, guides, contour lines and exported screenshots.
-- Update the offline HTML and PDF user manuals.
+- 在保留 0.9.1RC2 文件格式、输入输出、操作流程和数值算法的前提下重构代码。
+- 集中处理 3D / 三切面模式切换，拆分数据请求、PLY 导出和界面常量模块，减少重复分支。
+- 拆分预览加载、对象状态重置及测量表渲染；分离服务端对象、设置、上传处理，保留权限校验、错误和边界限制。
+- 增加重构前界面状态及二进制导出对照测试，覆盖网格、体数据和分割流程。
+- 保留手动桌面启动、完整原始网格和无需 Dragonfly 的独立解析。
 
-## 0.7.1
+## 0.9.1RC2 — 公开候选版
 
-- Add a persistent web port setting with automatic and custom port modes.
-- Apply saved ports on the next launch; command-line overrides affect only the current run.
-- Report occupied saved ports and use a temporary loopback port; explicit command-line conflicts fail clearly.
-- Preserve data-directory preferences and require exclusive socket binding on Windows.
-- Add an independent implementation and third-party rights statement, available offline and in distributions.
-- Update the HTML/PDF user manual with port configuration instructions.
+- **修复 3D 按钮**：从网格或体数据三切面点击“3D”时退出四窗口，隐藏切面窗口并同步相关控件。
+- CT 从三切面返回三维最大强度投影；再次打开三切面时保留切面位置和各面缩放。
+- 保留 0.9.1RC 的手动配置、启动服务和打开网页流程。
 
-## 0.7.0
+## 0.9.1RC — 公开候选版
 
-- Linked CT views: three original-resolution 2D planes and a synchronized 3D locator.
-- Drag crosshairs, scroll slices, navigate with keyboard or X/Y/Z sliders, and inspect original voxel values.
-- Shared grayscale window, time-step navigation, affine-aware aspect ratio, and four-view PNG export.
-- Light gray controls, black grayscale images, red/green/blue axes, and a blue 3D background.
-- Bounded slice requests reject stale results during rapid movement. Original arrays and full mesh defaults remain unchanged.
-- Updated offline HTML and PDF manuals with CT navigation instructions.
+- **先配置、后启动**：在桌面窗口设置监听端口和数据目录，再手动启动本地服务。
+- 只有点击“打开三维界面”才打开浏览器，启动软件时不自动跳转网页。
+- 首次数据目录默认程序所在文件夹，后续记住选择；增加文件夹选择、停止服务并修改、输入校验和操作提示。
+- 命令行端口 / 目录只对本次有效；继续只监听 `127.0.0.1`。
+- 更新离线说明书；Python 包版本标识为 `0.9.1rc1`。
 
-## 0.6.2
+## 0.9.0 — 历史公开版本
 
-- Add local file and directory selection buttons with a browsable filesystem picker.
-- Fill selected paths automatically and read source files directly without upload copies.
-- Require explicit data-directory selection on first launch before imports or caches are created.
-- Persist the selected directory, check write access and reopen setup when it becomes unavailable.
-- Support new-folder creation, directory search and existing decoded-directory selection.
-- Update the offline HTML and PDF user manuals for the new setup and import workflow.
+- **各切面独立缩放**：增加 25–800% 缩放滑块、右键平移、十字线居中和适应窗口。
+- **网格截面填充**：新增仅截线、填充、填充加轮廓模式和透明度设置；保留孔洞及嵌套区域。
+- 对开放、分叉、自交或存在歧义的轮廓回退截线并提示原因，不强行填充。
+- **移动中实时刷新**：建立空间候选索引、缓存未改变的平面，先显示截线再验证填充；不自动减少三角面。
+- 计算落后于操作时标明实际显示位置；截图保留各面的缩放、平移和填充外观。
+- 更新离线使用说明。
 
-## 0.6.1
+## 0.8.1 — 历史公开版本
 
-- Update clipping planes and volume slices immediately while dragging section controls.
-- Display live mesh intersections while exact contours are computed in a background worker.
-- Reuse section display resources and discard superseded contour results.
-- Preserve orthographic zoom while following a moving section.
-- Add an eight-chapter offline Chinese user manual, printable PDF and in-app help link.
+- 切换对象或离开网格视图时释放保留的网格数据包引用，减少大网格查看后的内存占用。
+- 保留 0.8.0 的网格三切面和统一配色功能。
 
-## 0.6.0
+## 0.8.0 — 历史公开版本
 
-- Independent Windows x64 distribution with a desktop launcher and bundled Python runtime.
-- Local import of ORSSession, ORSObject, STL and NPY files.
-- Raw container extraction, typed objects, mesh and measurement exports.
-- Complete original meshes by default; user-controlled face retention with actual counts.
-- Arbitrary plane sections, signed distance, reversed clipping and orthographic section views.
-- CT projections, isosurfaces, orthogonal and oblique slices, segmentation views and scalar coloring.
-- Persistent import catalog, separate application data directory and command-line tools.
+- **三角网格三切面**：STL 与 ORS 网格支持三个轴向截面，使用当前显示几何计算精确交线。
+- 支持十字线拖动、滚轮 / 键盘移动、源坐标输入和同步三维定位。
+- 网格截线在后台线程计算，明确处理共面三角形，不自动简化网格。
+- **统一配色**：新增可保存的黑白、浅色、深蓝主题，统一 3D 和三切面的背景、模型、参考标识、截线及截图。
+- 更新 HTML / PDF 使用说明。
+
+## 0.7.1 — 历史公开版本
+
+- **网页端口可设置**：支持自动分配或自定义端口并保存，下次启动生效；命令行覆盖只影响当前运行。
+- 已保存端口被占用时提示并临时分配本地端口；显式命令行端口冲突时明确报错，Windows 使用独占绑定。
+- 保留数据目录设置。
+- **独立实现说明**：增加未使用 Dragonfly 官方组件的实现说明与第三方权利声明，离线网页和发行包均可阅读。
+- 使用说明补充端口设置。后续 0.9.1RC 将桌面端口冲突改为在启动窗口提示并等待手动修改。
+
+## 0.7.0 — 历史公开版本
+
+- **CT 三切面联动**：三个原始分辨率二维切面与三维定位同步显示。
+- 支持拖动十字线、滚轮翻片、键盘、X/Y/Z 滑块及原始体素值读取。
+- 三个切面共享灰度窗口和时间步，按空间变换保留真实比例，支持四窗口 PNG 截图。
+- 引入浅灰控件、黑色灰度图、红绿蓝方向轴和蓝色三维背景的配色。
+- 限制快速移动时的切片请求，丢弃过期响应；原始数组及网格完整显示默认值不变。
+- 更新离线 CT 操作说明。
+
+## 0.6.2 — 历史公开版本
+
+- **本地文件选择按钮**：通过文件浏览器选择文件或目录并自动填写路径；本地路径导入直接读取原文件，不创建上传副本。
+- 支持目录搜索、新建文件夹和已有解析目录选择。
+- **首次设置数据目录**：导入和缓存创建前要求手动选择，检查写权限并保存设置；目录不可用时重新显示设置流程。
+- 更新 HTML / PDF 说明书。首次默认目录和启动流程在后续 0.9.1RC 进一步调整。
+
+## 0.6.1 — 历史公开版本
+
+- **剖面移动实时更新**：拖动控件时立即更新模型裁剪、参考平面和体数据切片。
+- 网格先显示实时交线，后台计算精确轮廓；复用显示资源，丢弃被新位置替代的结果。
+- 正对剖面时跟随移动并保持正交缩放。
+- 增加八章中文离线说明书、可打印 PDF 和软件内帮助入口。
+
+## 0.6.0 — 首次独立公开发行
+
+- **独立 Windows x64 软件**：提供桌面启动器和内置 Python 运行环境，无需安装 Dragonfly。
+- 本地导入 `.ORSSession`、`.ORSObject`、ASCII / 二进制 `.STL` 和三维 / 四维数值 `.NPY`。
+- 独立提取容器原始记录及支持的类型化对象，导出体数据、分割标签、网格、测量表和元数据。
+- **完整网格默认显示**：不自动简化；用户手动设置三角面保留比例，并显示实际面数。
+- 任意角度剖面支持方位角、俯仰角、有符号距离、反向剖切和沿法线正交查看。
+- 支持 CT 最大强度投影、等值面、正交 / 斜切片、分割表面和标量着色。
+- 导入目录持久化、独立应用数据目录、后台导入任务和命令行解析工具。
