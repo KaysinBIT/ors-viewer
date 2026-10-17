@@ -28,7 +28,7 @@ def main():
     folder = staging / 'ORSViewer'
     # Headless HTTP tests alone cannot detect missing tkinter/Tcl/Tk resources.
     check_desktop([str(folder/'ORSViewer.exe')], staging/'frozen-check/report.json')
-    for name in ['README.md', 'LICENSE', 'CHANGELOG.md', 'THIRD_PARTY_NOTICES.md', 'INDEPENDENT_IMPLEMENTATION.txt']:
+    for name in ['README.md', 'LICENSE', 'CHANGELOG.md', 'RELEASE_HISTORY.md', 'THIRD_PARTY_NOTICES.md', 'INDEPENDENT_IMPLEMENTATION.txt']:
         shutil.copy2(ROOT / name, folder / name)
     shutil.copy2(ROOT / 'viewer/web/manual.pdf', folder / 'ORSViewer-User-Manual-zh-CN.pdf')
     licenses = folder / 'licenses';licenses.mkdir(exist_ok=True)

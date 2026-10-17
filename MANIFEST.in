@@ -1,4 +1,5 @@
 include LICENSE README.md CHANGELOG.md THIRD_PARTY_NOTICES.md INDEPENDENT_IMPLEMENTATION.txt requirements-build.txt ORSViewer.spec .gitattributes .gitignore package.json
+include RELEASE_HISTORY.md
 recursive-include viewer/web *
 recursive-include viewer/fixtures *
 recursive-include scripts *.py
