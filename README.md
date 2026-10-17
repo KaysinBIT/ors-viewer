@@ -4,7 +4,7 @@
 
 使用说明：[PDF 说明书](viewer/web/manual.pdf) · [网页版说明书源文件](viewer/web/manual.html)。运行软件后也可点击右上角“使用说明”，离线阅读全部操作步骤。
 
-当前源码为 **1.2.0RC7 本地候选版**，新增旋转后 CT 切片的多核插值。默认自动使用最多 8 个计算进程，三个切面共用一个进程池，完整分辨率和数值结果保持不变。公开版本仍为 [1.2.0RC6](https://github.com/KaysinBIT/ors-viewer/releases/tag/v1.2.0RC6)，本地候选版尚未公开发布。浏览器 / GPU 视觉验收仍未完成。
+当前公开版本为 [**1.2.0RC7（Latest）**](https://github.com/KaysinBIT/ors-viewer/releases/tag/v1.2.0RC7)，新增旋转后 CT 切片的多核插值。默认自动使用最多 8 个计算进程，三个切面共用一个进程池，完整分辨率和数值结果保持不变。更新与实测结果见 [CHANGELOG.md](CHANGELOG.md)，此前版本见 [RELEASE_HISTORY.md](RELEASE_HISTORY.md)。浏览器 / GPU 视觉验收仍未完成。
 
 Windows 版补齐 tkinter / Tcl/Tk 桌面依赖；构建必须通过真实启动窗口和手动启动 / 停止服务检查，不再仅用无界面服务测试作为打包验收。
 
@@ -38,7 +38,7 @@ Windows 版补齐 tkinter / Tcl/Tk 桌面依赖；构建必须通过真实启动
 
 ## Windows 免安装版
 
-1. 从 Releases 下载 `ORSViewer-1.2.0RC6-Windows-x64.zip`；需要 1.1 系列正式版时选择 1.1.0。
+1. 从 [最新发行版](https://github.com/KaysinBIT/ors-viewer/releases/latest) 下载 `ORSViewer-1.2.0RC7-Windows-x64.zip`。
 2. 完整解压，保持 `ORSViewer.exe` 与 `_internal` 目录在一起。
 3. 双击 `ORSViewer.exe`。启动窗口不会自动打开网页。检查端口（0 为自动分配）和数据目录，点击“选择文件夹…”可修改目录。
 4. 点击“保存并启动服务”，显示本地网址后，再手动点击“打开三维界面”。
@@ -50,7 +50,7 @@ Windows 版补齐 tkinter / Tcl/Tk 桌面依赖；构建必须通过真实启动
 
 运行后可点击“停止服务并修改”重新设置端口和目录，再启动服务并手动打开页面。停止服务或关闭启动窗口会中断未完成任务，已有输出保留。更换目录不会移动或删除旧数据。Windows 的 `%LOCALAPPDATA%/ORSViewer/settings.json` 保存目录、端口、主题及按数据集路径区分的对齐偏好。
 
-1.2.0RC7 增加多进程采样一致性、异常回退、进程退出和启动参数回归检查。浏览器 / GPU 页面复测尚未完成。
+1.2.0RC7 的 240 项自动测试通过（96 项 Python、144 项 JavaScript），包括多进程采样一致性、异常回退、进程退出和启动参数回归检查。浏览器 / GPU 页面复测尚未完成。
 
 ## 多核 CT 插值
 
