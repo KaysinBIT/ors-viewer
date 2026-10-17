@@ -6,7 +6,9 @@ from .preview import array, grid_matrix, packet
 from .affine import matrix_product, inverse_affine, transform_points
 
 MAX_PLANE_PIXELS = 16_777_216
-CHUNK_PIXELS = 131072
+# Keep interpolation temporaries small when the three HTTP planes run together.
+# This bounds work memory only; every output pixel is still sampled.
+CHUNK_PIXELS = 8192
 IN_PLANE = ((1, 2), (0, 2), (0, 1))
 LABEL_TYPES = ('CxvVolume_ROI', 'CxvLabeledMultiROI')
 
@@ -78,17 +80,33 @@ class Sampler:
             values[~valid] = 0
             return values, valid, xyz
         xyz = np.clip(xyz, 0, np.array(self.shape[:0:-1]) - 1)
-        lo = np.floor(xyz).astype(np.int64); hi = np.minimum(lo+1, np.array(self.shape[:0:-1])-1)
-        fraction = xyz-lo
+        values = np.full(len(xyz), np.nan, dtype='<f4')
+        values[valid] = self.linear(xyz[valid])
+        return values, valid, xyz
+
+    def linear(self, xyz):
+        """Trilinear interpolation without per-corner N x 3 temporary arrays.
+
+        Only in-bounds pixels reach this method. Use elementwise NumPy operations
+        (no BLAS), and preserve corner order and zero-weight NaN semantics.
+        """
+        low = [np.floor(column).astype(np.int64) for column in xyz.T]
+        high = [np.minimum(index+1, size-1) for index, size in zip(low, self.shape[:0:-1])]
+        fraction = [column-index for column, index in zip(xyz.T, low)]
+        weights = [(1-f, f) for f in fraction]
+        indices = list(zip(low, high))
         values = np.zeros(len(xyz), dtype=float)
+        contribution = np.zeros_like(values)
         for corner in range(8):
-            bits = np.array([(corner >> a) & 1 for a in range(3)])
-            weight = np.prod(np.where(bits, fraction, 1-fraction), axis=1)
-            selected = weight > 0  # A zero-weight NaN must not corrupt an exact voxel sample.
-            x, y, z = np.where(bits, hi, lo)[selected].T
-            values[selected] += weight[selected] * self.data[self.time, z, y, x]
-        values[~valid] = np.nan
-        return values.astype('<f4'), valid, xyz
+            a, b, c = corner & 1, (corner >> 1) & 1, (corner >> 2) & 1
+            weight = weights[0][a] * weights[1][b] * weights[2][c]
+            selected = weight > 0
+            if not selected.any(): continue
+            x, y, z = indices[0][a], indices[1][b], indices[2][c]
+            contribution.fill(0)
+            np.multiply(weight, self.data[self.time, z, y, x], out=contribution, where=selected)
+            values += contribution
+        return values
 
 
 def reslice_packet(folder, meta, pose, axis, coordinate, time=0):

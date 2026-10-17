@@ -1,11 +1,39 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { planeTransform, imageToScreen, screenToIndices, IN_PLANE, clampIndex, LatestRequest } from '../viewer/web/mpr-math.js';
-import {clampZoom,zoomImageTransform,zoomMeshTransform,panImageFocus,panMeshFocus} from '../viewer/web/pane-view.js';
+import {clampZoom,zoomImageTransform,zoomMeshTransform,panImageFocus,panMeshFocus,wheelZoom,zoomPointerFocus} from '../viewer/web/pane-view.js';
 import {meshPlaneTransform,meshToScreen,screenToMesh} from '../viewer/web/mesh-sections-math.js';
 import {MPRView} from '../viewer/web/mpr.js';
 
 const shape=[5,4,3],matrix=[[0,-3,0,10],[2,0,1,20],[0,0,4,30],[0,0,0,1]];
+
+test('Ctrl wheel anchors continuous image and mesh points in all panes at both layout sizes',()=>{
+  for(const [width,height] of [[400,300],[1400,950]])for(const kind of ['volume','reslice','mesh'])for(let axis=0;axis<3;axis++){
+    const mesh=kind==='mesh',base=mesh?meshPlaneTransform([[-2,-3,-4],[2,3,4]],axis,width,height):planeTransform(shape,matrix,axis,width,height);
+    const transform=mesh?zoomMeshTransform:zoomImageTransform,toScreen=mesh?meshToScreen:imageToScreen;
+    // Also exercise anchors outside the image, after panning and at zoom limits.
+    for(const point of [[.1,.2],[-10,30]]){
+      const p={axis,zoom:1,focus:[1,2],zoomInput:{},zoomOutput:{},canvas:{getBoundingClientRect:()=>({left:21,top:32,width,height})}};
+      let sliceMoves=0,prevented=0;
+      const view={active:true,kind,indices:[2,3,4],paneFocus:p=>p.focus.slice(),clamp:(_a,v)=>v,step:()=>1,onPosition(){sliceMoves++;},draw(p){p.transform=transform(base,p.zoom,width,height,p.focus);}};
+      view.draw(p);const anchor=toScreen(p.transform,...point);
+      for(const deltaY of [-120,-120,120,-100000,100000,120]){
+        MPRView.prototype.onPaneWheel.call(view,p,{ctrlKey:true,deltaY,clientX:anchor[0]+21,clientY:anchor[1]+32,preventDefault(){prevented++;}});
+        const actual=toScreen(p.transform,...point);assert.ok(Math.abs(actual[0]-anchor[0])<1e-8);assert.ok(Math.abs(actual[1]-anchor[1])<1e-8);
+        assert.equal(Number(p.zoomInput.value),p.zoom*100);
+      }
+      assert.equal(sliceMoves,0);assert.equal(prevented,6);assert.deepEqual(view.indices,[2,3,4]);
+      MPRView.prototype.onPaneWheel.call(view,p,{ctrlKey:false,deltaY:100,preventDefault(){}});assert.equal(sliceMoves,1);
+    }
+  }
+});
+
+test('wheel zoom normalizes pixel/line units and clamps without moving the focus at limits',()=>{
+  assert.equal(wheelZoom(1,-16,0),wheelZoom(1,-1,1));
+  assert.equal(wheelZoom(1,-400,0),wheelZoom(1,-1,2));
+  assert.equal(wheelZoom(8,-100),8);assert.equal(wheelZoom(.25,100),.25);assert.equal(wheelZoom(2,NaN),2);
+  const focus=[1,2];assert.deepEqual(zoomPointerFocus({a:2,c:.4,d:3},focus,8,8,15,40,400,300),focus);
+});
 test('zoomed and panned volume planes pick the original voxel across all axes',()=>{
   for(let axis=0;axis<3;axis++)for(const zoom of [.25,1,3.5,8]){
     const base=planeTransform(shape,matrix,axis,400,300),focus=[base.cols*.35,base.rows*.65];

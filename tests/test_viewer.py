@@ -12,9 +12,10 @@ import urllib.request
 import uuid
 import io
 import time
+from unittest.mock import patch
 
 import numpy as np
-from viewer.preview import packet, sample_labels, label_preview, mesh_preview, volume_preview, PreviewCache, safe_file, controlled_mesh
+from viewer.preview import packet, sample_labels, label_preview, mesh_preview, volume_preview, full_volume_preview, PreviewCache, safe_file, controlled_mesh
 from viewer.server import Catalog, handler, table_data
 from viewer.imports import ImportJobs, import_standard, validate_source
 from viewer.simplify import simplify_packet
@@ -82,6 +83,38 @@ class ViewerTests(unittest.TestCase):
         self.assertEqual(header['range'], [60, 119]);self.assertEqual(arrays['volume'].shape, (3, 4, 5))
         np.testing.assert_allclose(np.array(header['matrix'])[:3, 3], [4, 4.5, 4])
         self.assertEqual(before, hashlib.sha256(source.read_bytes()).hexdigest())
+
+    def test_full_volume_streams_every_voxel_in_both_storage_orders(self):
+        for order in ('C','F'):
+            data=np.array(np.arange(2*3*5*7).reshape(2,3,5,7),dtype='<f4',order=order)
+            data[1,0,0,0]=np.nan;data[1,0,0,1]=np.inf
+            np.save(self.work/'volume.npy',data)
+            before=(self.work/'volume.npy').read_bytes()
+            meta={'type':'CxvChannel','grid':{'voxel_xyz_to_world':np.diag([2,3,4,1]).tolist()}}
+            output=self.work/'full.bin'
+            with patch('viewer.preview.VOLUME_CHUNK_VOXELS',17):full_volume_preview(self.work,meta,output,1)
+            header,arrays=unpack(output.read_bytes());reference,expected=unpack(volume_preview(self.work,meta,7,1))
+            self.assertEqual(header['full_resolution'],True);self.assertEqual(header['sample_shape_zyx'],[3,5,7])
+            for key in ('matrix','range','time_step','window','original_dtype'):self.assertEqual(header[key],reference[key])
+            np.testing.assert_array_equal(arrays['volume'],expected['volume'])
+            self.assertEqual(before,(self.work/'volume.npy').read_bytes())
+
+    def test_full_volume_cache_is_separate_and_refuses_limits_without_fallback(self):
+        data=np.arange(1*4*5*201,dtype='<u2').reshape(1,4,5,201);np.save(self.work/'volume.npy',data)
+        meta={'type':'CxvChannel','grid':{'shape_tzyx':list(data.shape)}};cache=PreviewCache(self.work/'cache')
+        full=cache.get(self.work,meta,'full');fine=cache.get(self.work,meta,'fine')
+        self.assertNotEqual(full,fine);self.assertEqual(full,cache.get(self.work,meta,'full'))
+        self.assertEqual(unpack(full.read_bytes())[1]['volume'].shape,data.shape[1:])
+        self.assertLess(unpack(fine.read_bytes())[1]['volume'].shape[-1],data.shape[-1])
+        with self.assertRaises(ValueError):cache.get(self.work,{'type':'CxvLabeledMultiROI'},'full')
+        output=self.work/'rejected.bin'
+        with patch('viewer.preview.MAX_FULL_VOLUME_BYTES',10):
+            with self.assertRaisesRegex(ValueError,'没有自动降采样'):full_volume_preview(self.work,meta,output)
+        self.assertFalse(output.exists())
+        with self.assertRaises(ValueError):full_volume_preview(self.work,meta,output,2)
+        np.save(self.work/'volume.npy',np.full((1,2,3,4),np.nan,dtype='<f4'))
+        with self.assertRaisesRegex(ValueError,'没有有限数值'):full_volume_preview(self.work,meta,output)
+        self.assertFalse(output.exists())
 
     def test_mesh_preview_removes_degeneracy_and_preserves_bounds(self):
         v = np.array([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], dtype='<f4');f = np.array([[0,1,2],[0,1,3],[0,2,3],[1,2,3]],dtype='<u4')

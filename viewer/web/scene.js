@@ -1,6 +1,7 @@
 import * as THREE from './vendor/three.module.js';
 import { OrbitControls } from './vendor/OrbitControls.js';
 import {DEFAULT_THEME} from './themes.js';
+import {validateFullVolume} from './volume-quality.js';
 
 export function parsePacket(buffer) {
   const view = new DataView(buffer), length = view.getUint32(0, true);
@@ -46,6 +47,7 @@ uniform float uIso;
 uniform vec3 uTint;
 uniform int uMode;
 uniform int uSteps;
+uniform bool uFullResolution;
 uniform bool uClipEnabled;
 uniform vec4 uClipPlane;
 in vec3 vOrigin;
@@ -70,10 +72,11 @@ void main() {
   float nearT = max(max(low.x,low.y),max(low.z,0.0));
   float farT = min(min(high.x,high.y),high.z);
   if (nearT >= farT) discard;
-  float stepT = (farT-nearT)/float(uSteps);
+  vec3 voxelRate = abs(ray*uTextureSize);
+  int steps = uFullResolution ? max(1,int(ceil((farT-nearT)*max(max(voxelRate.x,voxelRate.y),voxelRate.z)))) : uSteps;
+  float stepT = (farT-nearT)/float(steps);
   float maximum = 0.0;
-  for(int i=0;i<240;i++) {
-    if(i >= uSteps) break;
+  for(int i=0;i<steps;i++) {
     vec3 p = vOrigin + ray * (nearT + (float(i)+.5)*stepT) + .5;
     if(uClipEnabled && dot(uClipPlane.xyz,p-.5)+uClipPlane.w < 0.0) continue;
     float v = valueAt(p);
@@ -128,6 +131,7 @@ export class SceneView {
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));
     this.renderer.setClearColor(0, 0);
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    canvas.addEventListener('webglcontextlost',event=>{event.preventDefault();onError('显卡绘图上下文已丢失，可能是显存不足或全分辨率渲染耗时过长。请刷新页面后手动选择较低的预览精度。');});
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(38, 1, .01, 100);
     this.camera.up.set(0, 0, 1);
@@ -193,11 +197,13 @@ export class SceneView {
   }
 
   load(packet) {
+    if(packet.meta.kind==='volume'&&packet.meta.full_resolution)this.checkFullVolume(packet.meta.sample_shape_zyx);
     this.clear();this.packet = packet;
     const { meta, arrays } = packet;
     let bounds;
     if (meta.kind === 'volume') {
-      bounds = this.addVolume(meta, arrays);
+      try{bounds = this.addVolume(meta, arrays);}
+      catch(error){this.packet=null;throw error;} // Do not retain a large failed upload.
     } else {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.BufferAttribute(arrays.positions, 3));
@@ -262,15 +268,25 @@ export class SceneView {
     return null;
   }
 
+  checkFullVolume(shape){const gl=this.renderer.getContext();return validateFullVolume(shape,gl.getParameter(gl.MAX_3D_TEXTURE_SIZE));}
+
   addVolume(meta, arrays) {
     const [nz,ny,nx] = meta.sample_shape_zyx;
     const texture = new THREE.Data3DTexture(arrays.volume,nx,ny,nz);
     texture.format=THREE.RedFormat;texture.type=THREE.UnsignedByteType;
     texture.minFilter=THREE.LinearFilter;texture.magFilter=THREE.LinearFilter;
     texture.unpackAlignment=1;texture.needsUpdate=true;
+    if(meta.full_resolution){
+      const gl=this.renderer.getContext();
+      try{
+        if(gl.isContextLost())throw new Error('显卡绘图上下文已丢失，请刷新页面后重试');
+        this.renderer.initTexture(texture);
+        if(gl.getError()!==gl.NO_ERROR)throw new Error('全分辨率纹理上传失败，显存可能不足。请手动选择其他预览精度；没有自动降采样。');
+      }catch(error){texture.dispose();throw error;}
+    }
     const common = {uData:{value:texture},uWindow:{value:new THREE.Vector2(0,1)},uOpacity:{value:1},uClipEnabled:{value:false},uClipPlane:{value:new THREE.Vector4()}};
     const material = new THREE.ShaderMaterial({ glslVersion:THREE.GLSL3,side:THREE.BackSide,transparent:true,
-      uniforms:{...common,uTextureSize:{value:new THREE.Vector3(nx,ny,nz)},uMode:{value:0},uTint:{value:new THREE.Color(this.theme.mesh)},uIso:{value:.5},uSteps:{value:200},uOrthographic:{value:false},uCameraDirection:{value:new THREE.Vector3(0,0,-1)}},
+      uniforms:{...common,uTextureSize:{value:new THREE.Vector3(nx,ny,nz)},uMode:{value:0},uTint:{value:new THREE.Color(this.theme.mesh)},uIso:{value:.5},uSteps:{value:200},uFullResolution:{value:!!meta.full_resolution},uOrthographic:{value:false},uCameraDirection:{value:new THREE.Vector3(0,0,-1)}},
       vertexShader:volumeVertex,fragmentShader:volumeFragment,depthWrite:false });
     const matrix=new THREE.Matrix4().set(...meta.matrix.flat());
     const volume=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),material);

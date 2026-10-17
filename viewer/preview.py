@@ -9,8 +9,10 @@ import threading
 import numpy as np
 from .affine import transform_points
 
-QUALITY = {'fast': 64, 'balanced': 112, 'fine': 176}
-PREVIEW_VERSION = 3
+QUALITY = {'fast': 64, 'balanced': 112, 'fine': 176, 'full': None}
+PREVIEW_VERSION = 4
+MAX_FULL_VOLUME_BYTES = 2**31 - 1
+VOLUME_CHUNK_VOXELS = 1_048_576
 
 
 def safe_file(root, name):
@@ -27,6 +29,11 @@ def array(root, name):
     return data
 
 
+def packet_header(meta, descriptors):
+    header = json.dumps(dict(meta, arrays=descriptors), ensure_ascii=False, allow_nan=False).encode('utf-8')
+    return struct.pack('<I', len(header)) + header + b'\0' * ((-len(header)) % 4)
+
+
 def packet(meta, arrays):
     blocks, descriptors, offset = [], {}, 0
     for name, data in arrays.items():
@@ -39,8 +46,7 @@ def packet(meta, arrays):
         padding = (-len(raw)) % 4
         blocks.append(raw + b'\0' * padding)
         offset += len(raw) + padding
-    header = json.dumps(dict(meta, arrays=descriptors), ensure_ascii=False, allow_nan=False).encode('utf-8')
-    return struct.pack('<I', len(header)) + header + b'\0' * ((-len(header)) % 4) + b''.join(blocks)
+    return packet_header(meta, descriptors) + b''.join(blocks)
 
 
 def unit_of(column):
@@ -283,6 +289,19 @@ def label_preview(folder, meta, resolution, label_id=0):
                   {'positions': pos, 'indices': indices})
 
 
+def volume_metadata(data, meta, shape, time_step, limits, window, full=False):
+    matrix = grid_matrix(meta)
+    nx, ny, nz = map(int, data.shape[:0:-1])
+    local_to_world = np.eye(4)
+    local_to_world[:3, :3] = matrix[:3, :3] * np.array([nx, ny, nz])
+    local_to_world[:3, 3] = transform_points((np.array([nx, ny, nz]) - 1) / 2, matrix)
+    return {'kind': 'volume', 'sample_shape_zyx': list(shape),
+            'original_shape_tzyx': list(data.shape), 'time_step': time_step,
+            'range': limits, 'window': window, 'matrix': local_to_world.tolist(),
+            'original_dtype': data.dtype.str, 'full_resolution': full,
+            'approximation': ('全分辨率：原始体素尺寸，不进行空间抽样；8 位显示纹理，默认窗口按抽样估计。' if full else '降采样、8 位显示纹理；') + '原始 NPY 的位宽和数值不变。'}
+
+
 def volume_preview(folder, meta, resolution, time_step=0):
     data = array(folder, 'volume.npy')
     if data.ndim != 4 or not 0 <= time_step < data.shape[0]:
@@ -297,16 +316,46 @@ def volume_preview(folder, meta, resolution, time_step=0):
     if limits[1] <= limits[0]:
         limits = [lo, max(hi, lo + 1)]
     texture = np.clip((np.nan_to_num(sample, nan=lo, posinf=lo, neginf=lo) - lo) / max(hi - lo, 1e-20) * 255, 0, 255).astype('u1')
-    matrix = grid_matrix(meta)
-    nx, ny, nz = map(int, data.shape[:0:-1])
-    local_to_world = np.eye(4)
-    local_to_world[:3, :3] = matrix[:3, :3] * np.array([nx, ny, nz])
-    local_to_world[:3, 3] = transform_points((np.array([nx, ny, nz]) - 1) / 2, matrix)
-    return packet({'kind': 'volume', 'sample_shape_zyx': list(texture.shape),
-                   'original_shape_tzyx': list(data.shape), 'time_step': time_step,
-                   'range': [lo, hi], 'window': limits, 'matrix': local_to_world.tolist(),
-                   'original_dtype': data.dtype.str,
-                   'approximation': '降采样、8 位显示纹理；原始 NPY 的位宽和数值不变。'}, {'volume': texture})
+    return packet(volume_metadata(data, meta, texture.shape, time_step, [lo, hi], limits), {'volume': texture})
+
+
+def full_volume_preview(folder, meta, destination, time_step=0):
+    """Stream every voxel to the cache without allocating a full float volume.
+
+    Spatial resolution is exact; like the other display modes, intensities use
+    an 8-bit texture. Only the initial window estimate uses sampled statistics.
+    """
+    data = array(folder, 'volume.npy')
+    if data.ndim != 4 or not 0 <= time_step < data.shape[0] or any(n <= 0 for n in data.shape):
+        raise ValueError('体数据或时间步无效')
+    size = math.prod(data.shape[1:])
+    if size > MAX_FULL_VOLUME_BYTES:
+        raise ValueError('全分辨率 8 位纹理超过 2 GiB 的单纹理限制；请手动选择其他预览精度。没有自动降采样。')
+    def chunks():
+        return np.nditer(data[time_step], flags=['external_loop', 'buffered'], order='C',
+                         op_dtypes=['float32'], casting='unsafe', buffersize=VOLUME_CHUNK_VOXELS)
+    lo, hi = math.inf, -math.inf
+    for block in chunks():
+        valid = block[np.isfinite(block)]
+        if len(valid): lo, hi = min(lo, float(valid.min())), max(hi, float(valid.max()))
+    if not math.isfinite(lo): raise ValueError('体数据没有有限数值')
+    axes = sampling_axes(data.shape[1:], QUALITY['balanced'])
+    sample = np.asarray(data[time_step][np.ix_(*axes)], dtype='float32')
+    valid = sample[np.isfinite(sample)]
+    limits = np.percentile(valid, [20, 99.5]).tolist() if len(valid) else [lo, hi]
+    if limits[1] <= limits[0]: limits = [lo, max(hi, lo + 1)]
+    info = volume_metadata(data, meta, data.shape[1:], time_step, [lo, hi], limits, full=True)
+    descriptors = {'volume': {'dtype': '|u1', 'shape': list(data.shape[1:]), 'offset': 0, 'bytes': size}}
+    try:
+        with destination.open('wb') as stream:
+            stream.write(packet_header(info, descriptors))
+            for block in chunks():
+                texture = np.clip((np.nan_to_num(block, nan=lo, posinf=lo, neginf=lo) - lo) / max(hi-lo, 1e-20) * 255, 0, 255).astype('u1')
+                stream.write(texture.tobytes())
+            stream.write(b'\0' * ((-size) % 4))
+    except BaseException:
+        destination.unlink(missing_ok=True)
+        raise
 
 
 class PreviewCache:
@@ -318,6 +367,8 @@ class PreviewCache:
     def get(self, folder, meta, quality='balanced', time_step=0, label_id=0, retention=100):
         if quality not in QUALITY:
             raise ValueError('无效预览精度')
+        if quality == 'full' and meta['type'] != 'CxvChannel':
+            raise ValueError('全分辨率体纹理仅支持体数据；网格默认保留全部三角面')
         if meta['type'] == 'CxvFaceVertexMesh': quality = 'balanced'  # Quality only controls volume/label sampling.
         if not math.isfinite(retention) or not 1 <= retention <= 100:
             raise ValueError('保留比例须在 1–100% 之间')
@@ -345,6 +396,11 @@ class PreviewCache:
         if not target.exists():
             with self.lock:
                 if not target.exists():
+                    if quality == 'full':
+                        temporary = target.with_suffix('.partial')
+                        full_volume_preview(folder, meta, temporary, time_step)
+                        temporary.replace(target)
+                        return target
                     resolution = QUALITY[quality]
                     if meta['type'] == 'CxvFaceVertexMesh':
                         result = mesh_preview(folder, meta, resolution)

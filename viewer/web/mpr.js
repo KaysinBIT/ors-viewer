@@ -5,7 +5,7 @@ import { AXES, IN_PLANE, clampIndex, planeTransform, imageToScreen, screenToIndi
 import {MeshSections} from './mesh-sections.js';
 import {meshPlaneTransform,meshToScreen,screenToMesh} from './mesh-sections-math.js';
 import {DEFAULT_THEME} from './themes.js';
-import {clampZoom,zoomImageTransform,zoomMeshTransform,panImageFocus,panMeshFocus} from './pane-view.js';
+import {clampZoom,zoomImageTransform,zoomMeshTransform,panImageFocus,panMeshFocus,wheelZoom,zoomPointerFocus} from './pane-view.js';
 import {requestErrorMessage} from './data-client.js';
 
 async function resliceRequest(id,action,body,signal){
@@ -43,7 +43,7 @@ export class MPRView {
       const hint=document.createElement('span');hint.className='mpr-hint';hint.textContent=`${AXES[u]} →　${AXES[v]} ↑`;
       const zoomBar=document.createElement('div');zoomBar.className='mpr-zoom';
       const zoomLabel=document.createElement('span');zoomLabel.textContent='缩放';
-      const zoomInput=document.createElement('input');zoomInput.type='range';zoomInput.min=25;zoomInput.max=800;zoomInput.step=5;zoomInput.value=100;zoomInput.setAttribute('aria-label',`${AXES[axis]} 切面缩放比例`);zoomInput.title='100% 为适应当前窗口';
+      const zoomInput=document.createElement('input');zoomInput.type='range';zoomInput.min=25;zoomInput.max=800;zoomInput.step='any';zoomInput.value=100;zoomInput.setAttribute('aria-label',`${AXES[axis]} 切面缩放比例`);zoomInput.title='100% 为适应当前窗口；Ctrl + 滚轮以鼠标为中心缩放';
       const zoomOutput=document.createElement('output');zoomOutput.textContent='100%';
       const focusButton=document.createElement('button');focusButton.textContent='定位';focusButton.title='把十字线移到视窗中心';focusButton.setAttribute('aria-label',`${AXES[axis]} 切面居中十字线`);
       const resetButton=document.createElement('button');resetButton.textContent='适应';resetButton.title='恢复 100% 并显示完整切面';resetButton.setAttribute('aria-label',`${AXES[axis]} 切面恢复适应窗口`);
@@ -90,9 +90,7 @@ export class MPRView {
         else if(event.buttons&1)locate(event);
       });
       for(const name of ['pointerup','pointercancel','lostpointercapture'])canvas.addEventListener(name,()=>p.drag=null);
-      canvas.addEventListener('wheel',event=>{event.preventDefault();if(!this.active||!event.deltaY)return;
-        const next=this.indices.slice();next[axis]=this.clamp(axis,next[axis]+Math.sign(event.deltaY)*this.step(axis));this.onPosition(next);
-      },{passive:false});
+      canvas.addEventListener('wheel',event=>this.onPaneWheel(p,event),{passive:false});
       canvas.addEventListener('keydown',event=>{
         const key=event.key,next=this.indices.slice();let a,step;
         if(key==='PageUp'||key==='PageDown'){a=axis;step=key==='PageUp'?1:-1;}
@@ -169,6 +167,16 @@ export class MPRView {
   clamp(axis,value){const bounds=this.kind==='reslice'?this.info.bounds:this.meshSections?.bounds;return this.kind==='mesh'||this.kind==='reslice'?Math.max(bounds[0][axis],Math.min(bounds[1][axis],value)):clampIndex(value,this.shape[axis]);}
   step(axis){return this.kind==='reslice'?this.info.spacing[axis]:this.kind==='mesh'?(this.meshSections.bounds[1][axis]-this.meshSections.bounds[0][axis])/200:1;}
   resetPane(p){p.zoom=1;p.focus=null;p.drag=null;if(p.zoomInput)p.zoomInput.value=100;if(p.zoomOutput)p.zoomOutput.textContent='100%';}
+  onPaneWheel(p,event){
+    event.preventDefault();if(!this.active||!Number.isFinite(event.deltaY)||!event.deltaY)return;
+    if(event.ctrlKey){
+      if(!p.transform)return;
+      const rect=p.canvas.getBoundingClientRect(),zoom=wheelZoom(p.zoom,event.deltaY,event.deltaMode);
+      p.focus=zoomPointerFocus(p.transform,this.paneFocus(p),p.zoom,zoom,event.clientX-rect.left,event.clientY-rect.top,rect.width,rect.height,this.kind==='mesh');
+      p.zoom=zoom;p.zoomInput.value=zoom*100;p.zoomOutput.textContent=Math.round(zoom*100)+'%';this.draw(p);return;
+    }
+    const next=this.indices.slice();next[p.axis]=this.clamp(p.axis,next[p.axis]+Math.sign(event.deltaY)*this.step(p.axis));this.onPosition(next);
+  }
   resetViews(){this.setMaximized?.(null);for(const p of this.panes)this.resetPane(p);}
   setMaximized(axis=null){
     if(axis!==null&&(!this.active||!Number.isInteger(axis)||axis<0||axis>2))return;
@@ -219,7 +227,7 @@ export class MPRView {
     this.active=active;document.body.classList.toggle('mpr-active',active);document.body.dataset.mprKind=this.kind;this.layout.classList.toggle('mpr-layout',active);
     this.meshSections?.setActive(active&&this.kind==='mesh');
     this.reslicePlanes?.setActive(active&&this.kind==='reslice');
-    for(const p of this.panes)p.canvas.setAttribute('aria-label',`${AXES[p.axis]} ${this.kind==='mesh'?'网格截面':this.kind==='reslice'?'对齐切面':'原始切面'}，滚轮移动，左键定位，右键平移`);
+    for(const p of this.panes)p.canvas.setAttribute('aria-label',`${AXES[p.axis]} ${this.kind==='mesh'?'网格截面':this.kind==='reslice'?'对齐切面':'原始切面'}，滚轮移动，Ctrl + 滚轮以鼠标为中心缩放，左键定位，右键平移`);
     this.reslicePlanes?.setDisplayMode(this.standalone?'slices':'guides');
     if(this.scene)this.scene.dirty=true;
     this.readout.hidden=!active;document.getElementById('volume-3d-heading').hidden=!active;

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.0RC5 (local update candidate)
+
+- Add synchronized numeric azimuth/elevation inputs with fractional degrees and range validation.
+- Add cursor-centered Ctrl + wheel zoom to each CT, aligned and mesh section, in four-pane and maximized layouts. Keep ordinary wheel slice navigation.
+- Reduce aligned CT interpolation temporaries and skip empty pixels, preserving full-resolution pixels, masks and zero-weight NaN behavior. Retain BLAS-free concurrent computation.
+- Add an explicit full-resolution volume preview option. Stream every source voxel into an 8-bit display texture, retain the original spatial dimensions, and use voxel-sized ray steps. Check hardware/buffer limits and report failures without reducing resolution automatically; source precision is unchanged.
+- Extend numerical, UI-state and texture-resource regression coverage and update the offline manual. Browser/GPU visual verification remains pending.
+
 ## 1.2.0RC4 (local fix candidate)
 
 - Remove BLAS/LAPACK calls from spatial transforms, preview coordinate conversion and reslicing to prevent the Windows native access violation reproduced under concurrent slice requests. Preserve interpolation, source arrays and coordinate units.

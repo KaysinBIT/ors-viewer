@@ -5,6 +5,28 @@ import {createViewControls} from '../viewer/web/view-controls.js';
 import {requestJson,requestPreview,requestErrorMessage} from '../viewer/web/data-client.js';
 import {viewHarness} from './view_harness.mjs';
 import {createPreviewPLY} from '../viewer/web/export-ply.js';
+import {bindRangeNumber} from '../viewer/web/number-control.js';
+import {validateFullVolume} from '../viewer/web/volume-quality.js';
+
+test('full volume preflight rejects hardware and buffer limits without choosing another quality',()=>{
+  assert.equal(validateFullVolume([1024,1016,1004],2048),1044545536);
+  assert.throws(()=>validateFullVolume([1024,1016,1004],512),/单边上限 512/);
+  assert.throws(()=>validateFullVolume([2048,2048,2048],4096),/2 GiB/);
+  for(const shape of [[0,2,3],[1,2],[-1,2,3],[NaN,2,3]])assert.throws(()=>validateFullVolume(shape,2048),/维度无效/);
+});
+
+test('section angle inputs sync fractions, clamp boundaries and restore incomplete edits',()=>{
+  for(const max of [180,90]){
+    const range={min:-max,max,value:'0'},number={value:'0'},changes=[];
+    bindRangeNumber(range,number,()=>changes.push(Number(range.value)));
+    number.value='-23.625';number.oninput();assert.equal(Number(range.value),-23.625);
+    number.value='';number.oninput();assert.equal(Number(range.value),-23.625);number.onchange();assert.equal(Number(number.value),-23.625);
+    for(const value of ['-', 'NaN', 'Infinity']){number.value=value;number.oninput();assert.equal(Number(range.value),-23.625);number.onchange();assert.equal(Number(number.value),-23.625);}
+    number.value='1000';number.oninput();assert.equal(Number(range.value),max);number.onchange();assert.equal(Number(number.value),max);
+    number.value='-1000';number.onchange();assert.equal(Number(number.value),-max);
+    range.value='12.5';range.oninput();assert.equal(number.value,'12.5');assert.equal(changes.at(-1),12.5);
+  }
+});
 
 // Golden snapshots were captured from v0.9.1RC2 before extracting its controls.
 const fixtures=JSON.parse(readFileSync(new URL('./fixtures/view-controls-v091rc2.json',import.meta.url)));

@@ -16,6 +16,19 @@ import {viewHarness} from './view_harness.mjs';
 import {THEMES} from '../viewer/web/themes.js';
 import {LatestRequest} from '../viewer/web/mpr-math.js';
 
+test('full volume uploads the original texture and enables voxel-sized ray steps',()=>{
+  const meta={sample_shape_zyx:[3,4,5],matrix:[[5,0,0,2],[0,4,0,1.5],[0,0,3,1],[0,0,0,1]],window:[0,50],full_resolution:true};
+  const data=new Uint8Array(60),uploads=[];let disposed=0,error=0;
+  const view={group:new THREE.Group(),theme:{mesh:0xffffff},setWindow(){},renderer:{getContext:()=>({NO_ERROR:0,isContextLost:()=>false,getError:()=>error}),initTexture(texture){uploads.push(texture);texture.addEventListener('dispose',()=>disposed++);}}};
+  SceneView.prototype.addVolume.call(view,meta,{volume:data});
+  assert.equal(uploads[0].image.data,data);assert.equal(uploads[0].image.width,5);assert.equal(uploads[0].image.height,4);assert.equal(uploads[0].image.depth,3);
+  assert.equal(view.volume.material.uniforms.uFullResolution.value,true);
+  assert.match(view.volume.material.fragmentShader,/for\(int i=0;i<steps;i\+\+\)/);
+  assert.match(view.volume.material.fragmentShader,/ray\*uTextureSize/);
+  error=1285;assert.throws(()=>SceneView.prototype.addVolume.call(view,meta,{volume:data}),/显存可能不足/);assert.equal(disposed,1);
+  const failed={clear(){},checkFullVolume(){},addVolume(){throw new Error('upload failed');}};
+  assert.throws(()=>SceneView.prototype.load.call(failed,{meta:{...meta,kind:'volume'},arrays:{volume:data}}),/upload failed/);assert.equal(failed.packet,null);
+});
 const close=(a,b,tolerance=1e-7)=>{assert.equal(a.length,b.length);a.forEach((x,i)=>assert.ok(Math.abs(x-b[i])<=tolerance,`${x} != ${b[i]}`));};
 const pose={enabled:true,pivot:[100,-25,12],rotation:rotationFromAngles([23,-47,91])};
 const vertices=new Float32Array([0,0,0,1,0,0,0,1,0,0,0,1]),indices=new Uint32Array([0,2,1,0,1,3,1,2,3,2,0,3]);

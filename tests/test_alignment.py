@@ -3,6 +3,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 from http.server import ThreadingHTTPServer
 from types import SimpleNamespace
 import threading
@@ -60,6 +61,39 @@ class AlignmentTests(unittest.TestCase):
         self.data[0,0,0,1] = np.nan; np.save(self.root/'volume.npy', self.data)
         values, _, _ = Sampler(self.root,self.meta,pose).sample(np.array([[0,0,0],[100,0,0]]))
         self.assertEqual(values[0],0); self.assertTrue(np.isnan(values[1]))
+
+    def test_optimized_interpolation_matches_rc4_corners_for_all_storage_orders(self):
+        # The previous vector implementation is the numerical regression oracle.
+        def reference(sampler, xyz):
+            lo=np.floor(xyz).astype(np.int64)
+            hi=np.minimum(lo+1,np.array(sampler.shape[:0:-1])-1)
+            fraction=xyz-lo; values=np.zeros(len(xyz))
+            for corner in range(8):
+                bits=np.array([(corner>>a)&1 for a in range(3)])
+                weight=np.prod(np.where(bits,fraction,1-fraction),axis=1)
+                selected=weight>0; x,y,z=np.where(bits,hi,lo)[selected].T
+                values[selected]+=weight[selected]*sampler.data[sampler.time,z,y,x]
+            return values
+        self.meta['grid']['voxel_xyz_to_world']=np.eye(4).tolist()
+        pose={**self.pose,'enabled':False}
+        rng=np.random.default_rng(205)
+        points=rng.uniform([-.6,-.6,-.6],[4.6,3.6,2.6],(511,3))
+        points=np.concatenate((points,[[0,0,0],[4,3,2],[-.5,1,1],[4.5,1,1],[1,0,0],[2,0,0]]))
+        for dtype in ('uint16','float32','float64'):
+            for order in ('C','F'):
+                data=np.array(self.data,dtype=dtype,order=order)
+                if dtype!='uint16':data[0,0,0,1]=np.nan;data[0,0,0,2]=np.inf
+                np.save(self.root/'volume.npy',data)
+                sampler=Sampler(self.root,self.meta,pose)
+                actual=sampler.sample(points)
+                with patch.object(Sampler,'linear',reference):expected=sampler.sample(points)
+                for result,wanted in zip(actual,expected):np.testing.assert_array_equal(result,wanted)
+                self.assertEqual(actual[0][-6],0,'zero-weight NaN/Inf must not affect an exact sample')
+                # Pixel order/masks must also survive non-row-aligned chunk boundaries.
+                with patch('viewer.reslice.CHUNK_PIXELS',17):actual_packet=reslice_packet(self.root,self.meta,pose,2,.35)
+                with patch.object(Sampler,'linear',reference):expected_packet=reslice_packet(self.root,self.meta,pose,2,.35)
+                self.assertEqual(actual_packet,expected_packet)
+                del sampler  # Release the Windows mmap before replacing its fixture.
 
     def test_sparse_dense_label_parity_inclusive_ends_and_large_ids(self):
         labels = np.zeros_like(self.data, dtype='<u4'); labels.ravel()[2:6] = 70000

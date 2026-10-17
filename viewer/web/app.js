@@ -10,6 +10,7 @@ import {requestJson as api, requestPreview} from './data-client.js';
 import {createPreviewPLY} from './export-ply.js';
 import {AlignmentPanel} from './alignment-panel.js';
 import {poseMatrix} from './alignment-math.js';
+import {bindRangeNumber} from './number-control.js';
 import {AXIS_KEYS, PERCENT_SCALE, TABLE_PAGE_SIZE, TOAST_DURATION_MS, IMPORT_POLL_INTERVAL_MS, DOWNLOAD_URL_LIFETIME_MS} from './ui-constants.js';
 
 const $=id=>document.getElementById(id);
@@ -93,8 +94,11 @@ function resetObjectView(object){
   $('retention').value=100;$('retention-value').textContent='100%';$('section-enabled').checked=false;$('section-distance').value=0;$('section-distance-number').value=0;$('section-fields').hidden=true;
   $('section-fill-controls').hidden=object.kind==='volume';
   $('section-mode').value='cut';$('section-flip').checked=false;
-  $('section-azimuth').value=0;$('section-elevation').value=0;state.faceSection=false;
+  for(const id of ['section-azimuth','section-elevation']){$(id).value=0;$(id+'-number').value=0;}state.faceSection=false;
   $('retention-field').hidden=object.kind==='volume';$('quality').closest('label').hidden=object.kind==='mesh';
+  $('quality-full').hidden=object.kind!=='volume';$('quality-full').disabled=object.kind!=='volume';
+  if(object.kind!=='volume'&&$('quality').value==='full')$('quality').value='balanced';
+  $('full-resolution-note').hidden=object.kind!=='volume';
   $('inspector').scrollTop=0;
   $('table-panel').hidden=true;$('stage').classList.remove('has-table');$('scene-error').hidden=true;
   $('object-title').textContent=object.title;$('object-kind').textContent=`${kinds[object.kind].toUpperCase()} / OBJECT ${object.index}`;
@@ -130,6 +134,7 @@ async function loadPreview(){
   if(!scene){showError(rendererError||'WebGL 2 三维显示不可用');$('render-status').textContent='三维渲染不可用';return;}
   const request=beginPreviewRequest();
   try{
+    if(state.object.kind==='volume'&&$('quality').value==='full')scene.checkFullVolume(state.meta.grid.shape_tzyx.slice(1));
     const query=`?quality=${$('quality').value}&time=${$('time-step').value||0}&label=${state.selectedLabel||0}&retention=${$('retention').value}`;
     const packet=await requestPreview(objectUrl('preview')+query,state.abort.signal,parsePacket);
     if(!isCurrentPreview(request))return;
@@ -147,6 +152,7 @@ function beginPreviewRequest(){
   state.abort?.abort();state.abort=new AbortController();
   $('loading').hidden=false;
   $('loading-description').textContent=state.object.kind==='mesh'?(Number($('retention').value)===100?'正在载入全部原始网格，大模型需要更多时间和内存':'正在按指定比例简化网格'):'正在生成三维显示数据';
+  if(state.object.kind==='volume'&&$('quality').value==='full')$('loading-description').textContent='正在分块读取全部体素并载入全分辨率纹理，大模型需要更多时间、内存和显存';
   $('scene-error').hidden=true;$('render-status').textContent='正在载入…';$('app-status').textContent='准备预览 · '+state.object.title;
   $('viewport').dataset.ready='false';
   return request;
@@ -155,9 +161,9 @@ function isCurrentPreview(request){
   return request.revision===state.request&&request.objectId===state.object.id;
 }
 function applyPreviewPacket(packet, previousScalar) {
+  scene.load(packet);
   state.preview = packet;
   alignment.ready=true;
-  scene.load(packet);
   scene.setAlignment(poseMatrix(state.alignment));
   scene.opacity(Number($('opacity').value) / PERCENT_SCALE);
   scene.wireframe($('wireframe').checked);
@@ -177,8 +183,8 @@ function configurePreviewKind(packet) {
   const meta = packet.meta;
   if (meta.kind === 'volume') {
     setupVolume(meta);
-    $('render-status').textContent = `3D 预览 ${meta.sample_shape_zyx.slice().reverse().join(' × ')} · 二维切片为原始分辨率`;
-    $('preview-note').textContent = 'CT 二维切片读取原始分辨率，按实际体素间距显示；窗口映射使用 float32，定位读数来自原始数值。三维快速纹理为采样预览，原始切片到达后同步替换定位平面。';
+    $('render-status').textContent = `3D ${meta.full_resolution?'全分辨率':'预览'} ${meta.sample_shape_zyx.slice().reverse().join(' × ')} · 二维切片为原始分辨率`;
+    $('preview-note').textContent = meta.approximation+' CT 二维切片保持原始分辨率，定位读数来自原始数值。';
     return;
   }
   $('render-status').textContent = `${meta.focus_label?'标签 '+meta.focus_label+' · ':''}${meta.simplified===false?'原始网格':'当前显示'} ${fmt(meta.preview_triangles||0)} 三角形`;
@@ -263,7 +269,7 @@ async function setupReslice(snap=null){
     mpr.resliceSource(objectId,info,pose,state.object.kind==='volume'?Number($('time-step').value||0):0,coordinates);mpr.suspended=false;
     if(state.object.kind==='volume'){
       setCoordinateRanges('slice',info.bounds);setSlicePosition(coordinates);updateVolumeMode();scene.iso(Number($('iso').value)/PERCENT_SCALE);
-      $('mpr-help').textContent='XYZ 为固定世界轴，位置单位沿用源数据。右上三维窗口显示完整模型，与 3D 共用渲染方式；二维切面更新期间保留上一帧并标记状态。';
+      $('mpr-help').textContent='XYZ 为固定世界轴，位置单位沿用源数据。Ctrl + 滚轮以鼠标为中心缩放，四窗口和最大化均支持。三维窗口与 3D 共用完整模型；二维切面更新时保留上一帧并标记状态。';
     }else{setCoordinateRanges('mesh',info.bounds);updateMeshPosition(coordinates);updateMeshMode();}
     if(snap&&!mpr.active)viewControls.toggleMPR();
     mpr.position(coordinates);
@@ -286,7 +292,7 @@ async function applyAlignment(pose,snap=null){
   }else if(state.object.kind==='labels'||pose.enabled)await setupReslice(snap);
   else{
     state.alignmentAbort?.abort();state.alignmentRevision++;mpr.suspended=false;setupVolume(state.preview.meta);
-    $('mpr-help').textContent='点击或拖动十字线定位，滚轮翻片。二维读取原始切片，按源数据轴显示。';
+    $('mpr-help').textContent='点击或拖动十字线定位，滚轮翻片，Ctrl + 滚轮以鼠标为中心缩放。四窗口和最大化均支持。二维读取原始切片，按源数据轴显示。';
   }
   updateSection();if(state.faceSection)section?.face();
 }
@@ -447,7 +453,7 @@ $('section-fill-mode').onchange=updateSectionDisplay;
 $('section-fill-opacity').oninput=updateSectionDisplay;
 updateSectionDisplay();
 $('section-enabled').onchange=()=>{state.faceSection=false;updateSection();};
-for(const id of ['section-azimuth','section-elevation'])$(id).oninput=()=>updateSection();
+for(const id of ['section-azimuth','section-elevation'])bindRangeNumber($(id),$(id+'-number'),()=>updateSection());
 for(const id of ['section-flip','section-guide','section-mode'])$(id).onchange=()=>updateSection();
 $('section-distance').oninput=()=>updateSection($('section-distance').value,true);
 $('section-distance-number').onchange=()=>updateSection($('section-distance-number').value,true);
