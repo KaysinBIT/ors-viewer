@@ -109,7 +109,21 @@ class Sampler:
         return values
 
 
-def reslice_packet(folder, meta, pose, axis, coordinate, time=0):
+def sample_range(sampler, axis, coordinate, start, end):
+    """Sample a contiguous plane fragment with the same arithmetic as serial MPR."""
+    info = sampler.info; u, v = IN_PLANE[axis]; cols = info['shape_xyz'][u]
+    values = np.empty(end-start, dtype='<u4' if sampler.labels else '<f4')
+    mask = np.empty(end-start, dtype='u1')
+    for begin in range(start, end, CHUNK_PIXELS):
+        stop = min(end, begin+CHUNK_PIXELS); offsets = np.arange(begin, stop)
+        world = np.empty((stop-begin, 3)); world[:, axis] = coordinate
+        world[:, u] = info['origin'][u] + (offsets % cols)*info['spacing'][u]
+        world[:, v] = info['origin'][v] + (offsets // cols)*info['spacing'][v]
+        values[begin-start:stop-start], mask[begin-start:stop-start], _ = sampler.sample(world)
+    return values, mask
+
+
+def reslice_packet(folder, meta, pose, axis, coordinate, time=0, executor=None):
     if type(axis) is not int or axis not in (0, 1, 2) or not np.isfinite(coordinate):
         raise ValueError('切面轴或位置无效')
     sampler = Sampler(folder, meta, pose, time); info = sampler.info
@@ -118,14 +132,10 @@ def reslice_packet(folder, meta, pose, axis, coordinate, time=0):
     u, v = IN_PLANE[axis]; cols, rows = info['shape_xyz'][u], info['shape_xyz'][v]
     if rows * cols > MAX_PLANE_PIXELS:
         raise ValueError('对齐切面超过 1677 万像素，无法载入；没有自动降低分辨率')
-    values = np.empty(rows*cols, dtype='<u4' if sampler.labels else '<f4')
-    mask = np.empty(rows*cols, dtype='u1')
-    for start in range(0, rows*cols, CHUNK_PIXELS):
-        end = min(rows*cols, start+CHUNK_PIXELS); offsets = np.arange(start, end)
-        world = np.empty((end-start, 3)); world[:, axis] = coordinate
-        world[:, u] = info['origin'][u] + (offsets % cols)*info['spacing'][u]
-        world[:, v] = info['origin'][v] + (offsets // cols)*info['spacing'][v]
-        values[start:end], mask[start:end], _ = sampler.sample(world)
+    result = None
+    if executor is not None and not sampler.labels:
+        result = executor.sample(folder, meta, pose, axis, coordinate, time, rows*cols)
+    values, mask = result if result is not None else sample_range(sampler, axis, coordinate, 0, rows*cols)
     finite = values[(mask != 0) & np.isfinite(values)]
     return packet({**info, 'kind': 'reslice', 'axis': axis, 'index': coordinate, 'time_step': time,
                    'shape_yx': [rows, cols], 'resampled': True,

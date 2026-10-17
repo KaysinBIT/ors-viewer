@@ -37,6 +37,14 @@ class LauncherTests(unittest.TestCase):
                 'viewer.launcher.sys.executable', str(self.root / 'ORSViewer.exe')):
             self.assertEqual(application_directory(), self.root)
 
+    def test_slice_worker_option_reaches_the_desktop_server(self):
+        with patch('viewer.launcher.desktop') as desktop:
+            ors_viewer.main(['--slice-workers','1','--settings-file',str(self.prefs)])
+            self.assertEqual(desktop.call_args.args[0].slice_workers,1)
+        session=self.session(slice_workers=1)
+        session.start(self.root,0)
+        self.assertEqual(session.server.workspace.reslicer.workers,1)
+
     def test_initial_configuration_does_not_bind_create_workspace_or_open_browser(self):
         with patch('viewer.server.make_server') as make, patch('webbrowser.open') as browser:
             session = self.session()

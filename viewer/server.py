@@ -22,6 +22,7 @@ from .preview import PreviewCache, safe_file, unit_of, parse_sample_counts
 from .slices import slice_packet, voxel_value
 from .alignment import dataset_alignment, save_alignment
 from .reslice import geometry as reslice_geometry, reslice_packet, reslice_probe
+from .reslice_pool import ResliceExecutor
 from .imports import ImportJobs, EXTENSIONS
 from .file_browser import list_directory, create_directory
 from .settings import validate_directory, save_directory, load_port, save_port, validate_port, load_theme, save_theme
@@ -166,7 +167,7 @@ def handler(catalog, cache, token, imports=None, workspace=None):
             try:
                 url = urlsplit(self.path);route = unquote(url.path);q = parse_qs(url.query)
                 if route == '/api/catalog': return self.json({'datasets': catalog.public()})
-                if route == '/api/health': return self.json({'ok': True, 'version': '1.2.0RC6'})
+                if route == '/api/health': return self.json({'ok': True, 'version': '1.2.0RC7'})
                 if route == '/api/settings':
                     return self.json(workspace.public() if workspace else {'ready': True, 'data_directory': None, 'message': ''})
                 parts = route.strip('/').split('/')
@@ -240,7 +241,7 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                     if parts[3] == 'reslice-info': return self.json(reslice_geometry(meta, body['pose'])[0])
                     if parts[3] == 'reslice-probe':
                         return self.json(reslice_probe(folder, meta, body['pose'], body['xyz'], body.get('time', 0)))
-                    payload = reslice_packet(folder, meta, body['pose'], body['axis'], body['coordinate'], body.get('time', 0))
+                    payload = reslice_packet(folder, meta, body['pose'], body['axis'], body['coordinate'], body.get('time', 0), executor=getattr(workspace, 'reslicer', None))
                     self.send_headers(mime='application/octet-stream', length=len(payload))
                     self.end_headers(); self.wfile.write(payload)
                     return
@@ -300,11 +301,12 @@ def handler(catalog, cache, token, imports=None, workspace=None):
 
 
 class Workspace:
-    def __init__(self, settings_file=None, directories=(), message='', on_ready=None):
+    def __init__(self, settings_file=None, directories=(), message='', on_ready=None, slice_workers=0):
         self.catalog = Catalog();self.cache = None;self.imports = None;self.directory = None
         self.settings_file = settings_file;self.directories = directories;self.message = message
         self.on_ready = on_ready;self.lock = threading.RLock();self.ready = False;self.server = None
         self.requested_port = 0;self.port_warning = '';self.port_source = 'default'
+        self.reslicer = ResliceExecutor(slice_workers)
 
     def public(self):
         with self.lock:
@@ -355,11 +357,14 @@ class Workspace:
             (directory / 'runtime' / 'server.json').write_text(json.dumps({'url': url, 'pid': os.getpid()}), encoding='utf-8')
 
     def close(self):
-        if self.imports: self.imports.close()
+        try:
+            if self.imports: self.imports.close()
+        finally:
+            self.reslicer.close()
 
 
-def make_server(port, directories, state_dir=None, settings_file=None, setup_message='', on_ready=None, recover_directory=False):
-    workspace = Workspace(settings_file, directories, setup_message, on_ready)
+def make_server(port, directories, state_dir=None, settings_file=None, setup_message='', on_ready=None, recover_directory=False, slice_workers=0):
+    workspace = Workspace(settings_file, directories, setup_message, on_ready, slice_workers)
     saved_port, warning = load_port(settings_file)
     requested = saved_port if port is None else validate_port(port)
     workspace.requested_port = requested

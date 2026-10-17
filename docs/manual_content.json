@@ -1,6 +1,6 @@
 {
   "title": "ORS Viewer 使用说明书",
-  "version": "1.2.0RC6",
+  "version": "1.2.0RC7",
   "subtitle": "独立文件解析与三维查看",
   "pages": [
     {
@@ -520,7 +520,7 @@
           "heading": "移动时持续刷新",
           "paragraphs": [
             "拖动过程中会持续提交并显示切片 / 截线结果，不等待鼠标松开。大网格首次使用需要建立空间索引，索引不减少三角面；移动后优先更新截线，再补齐填充。",
-            "旋转后 CT 需逐像素插值，比直接读取原始切片更耗时。分块采样减少临时内存，并跳过模型外空白；保留完整分辨率。计算落后时标题标记当前实际位置，截图前应等待更新完成。"
+            "旋转后 CT 使用共享计算进程池进行线性插值，自动最多 8 个进程；小切面和分割标签保持串行。首次计算需启动进程，后续复用。分块采样保留完整分辨率；计算落后时保留上一帧，截图前应等待更新完成。"
           ]
         },
         {
@@ -652,13 +652,16 @@
         {
           "heading": "源码环境",
           "paragraphs": [
-            "需要 Python 3.14 或更新版本。创建并激活虚拟环境后，在源码目录安装项目。Windows 免安装版已自带运行环境，不需要执行此步骤。"
+            "源码需要 Python 3.14+，在虚拟环境中安装。Windows 免安装包已自带运行环境。"
           ],
           "code": "python -m pip install .\nors-viewer"
         },
         {
           "heading": "启动本地服务",
-          "code": "ors-viewer --headless --open --port 8769\nors-viewer --state-dir ./viewer-data --data ./extracted/data"
+          "code": "ors-viewer --headless --open --port 8769 --slice-workers 4\nors-viewer --state-dir ./viewer-data --data ./extracted/data",
+          "paragraphs": [
+            "--slice-workers：0 自动（最多 8 个进程），1 串行，或指定进程数；不超过可用逻辑核数且最多 32，仅本次启动有效。"
+          ]
         },
         {
           "heading": "独立提取",

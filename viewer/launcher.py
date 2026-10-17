@@ -36,7 +36,7 @@ class LaunchSession:
         directory = validate_directory(directory)
         from .server import make_server
         server, url = make_server(port, self.args.data, directory, self.settings_file,
-                                  on_ready=self.on_ready)
+                                  on_ready=self.on_ready, slice_workers=getattr(self.args, 'slice_workers', 0))
         try:
             changes = {}
             if self.args.state_dir is None or directory != self.args.state_dir.expanduser().resolve():

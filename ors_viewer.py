@@ -7,7 +7,7 @@ import sys
 import webbrowser
 from viewer.settings import settings_path, load_directory, validate_directory, validate_port
 
-VERSION = '1.2.0RC6'
+VERSION = '1.2.0RC7'
 
 
 def configure_logs(directory):
@@ -43,6 +43,9 @@ def main(argv=None):
     parser.add_argument('--headless', action='store_true', help='Run local server without the desktop launcher')
     parser.add_argument('--open', action='store_true', help='Open browser in headless mode')
     parser.add_argument('--port', type=validate_port, default=None, help='Port for this run (0: automatic); overrides saved port')
+    from viewer.reslice_pool import validate_worker_count
+    parser.add_argument('--slice-workers', type=validate_worker_count, default=0,
+                        help='CT interpolation processes (0: automatic, up to 8; 1: serial)')
     directory_options = parser.add_mutually_exclusive_group()
     directory_options.add_argument('--state-dir', type=Path, help='Use a data directory for this run without changing saved preferences')
     directory_options.add_argument('--choose-data-dir', action='store_true', help='Choose the data directory again before starting')
@@ -64,7 +67,7 @@ def main(argv=None):
     from viewer.server import make_server
     server, url = make_server(args.port, args.data, directory, settings_file, message,
                               on_ready=lambda folder: configure_logs(folder / 'logs'),
-                              recover_directory=args.state_dir is None)
+                              recover_directory=args.state_dir is None, slice_workers=args.slice_workers)
     if sys.stdout is not None: print('ORS Viewer: ' + url, flush=True)
     if server.workspace.port_warning and sys.stderr is not None: print(server.workspace.port_warning, file=sys.stderr, flush=True)
     if args.open: webbrowser.open(url)
@@ -75,6 +78,8 @@ def main(argv=None):
 
 
 if __name__ == '__main__':
+    import multiprocessing
+    multiprocessing.freeze_support()
     try: raise SystemExit(main())
     except Exception as exc:
         logging.exception('Application failed')
