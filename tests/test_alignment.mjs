@@ -25,6 +25,8 @@ test('full volume uploads the original texture and enables voxel-sized ray steps
   assert.equal(view.volume.material.uniforms.uFullResolution.value,true);
   assert.match(view.volume.material.fragmentShader,/for\(int i=0;i<steps;i\+\+\)/);
   assert.match(view.volume.material.fragmentShader,/ray\*uTextureSize/);
+  SceneView.prototype.addVolume.call(view,{...meta,full_resolution:false,custom_sampling:true},{volume:data});
+  assert.equal(view.volume.material.uniforms.uFullResolution.value,true,'custom counts use their own texture resolution for ray steps');
   error=1285;assert.throws(()=>SceneView.prototype.addVolume.call(view,meta,{volume:data}),/显存可能不足/);assert.equal(disposed,1);
   const failed={clear(){},checkFullVolume(){},addVolume(){throw new Error('upload failed');}};
   assert.throws(()=>SceneView.prototype.load.call(failed,{meta:{...meta,kind:'volume'},arrays:{volume:data}}),/upload failed/);assert.equal(failed.packet,null);

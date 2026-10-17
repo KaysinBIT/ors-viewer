@@ -11,6 +11,7 @@ import {createPreviewPLY} from './export-ply.js';
 import {AlignmentPanel} from './alignment-panel.js';
 import {poseMatrix} from './alignment-math.js';
 import {bindRangeNumber} from './number-control.js';
+import {customSampleCounts} from './volume-quality.js';
 import {AXIS_KEYS, PERCENT_SCALE, TABLE_PAGE_SIZE, TOAST_DURATION_MS, IMPORT_POLL_INTERVAL_MS, DOWNLOAD_URL_LIFETIME_MS} from './ui-constants.js';
 
 const $=id=>document.getElementById(id);
@@ -96,9 +97,9 @@ function resetObjectView(object){
   $('section-mode').value='cut';$('section-flip').checked=false;
   for(const id of ['section-azimuth','section-elevation']){$(id).value=0;$(id+'-number').value=0;}state.faceSection=false;
   $('retention-field').hidden=object.kind==='volume';$('quality').closest('label').hidden=object.kind==='mesh';
-  $('quality-full').hidden=object.kind!=='volume';$('quality-full').disabled=object.kind!=='volume';
-  if(object.kind!=='volume'&&$('quality').value==='full')$('quality').value='balanced';
-  $('full-resolution-note').hidden=object.kind!=='volume';
+  for(const id of ['quality-full','quality-custom']){$(id).hidden=object.kind!=='volume';$(id).disabled=object.kind!=='volume';}
+  if(object.kind!=='volume'&&['full','custom'].includes($('quality').value))$('quality').value='balanced';
+  state.customSamples=null;updateQualityFields();
   $('inspector').scrollTop=0;
   $('table-panel').hidden=true;$('stage').classList.remove('has-table');$('scene-error').hidden=true;
   $('object-title').textContent=object.title;$('object-kind').textContent=`${kinds[object.kind].toUpperCase()} / OBJECT ${object.index}`;
@@ -125,17 +126,22 @@ function renderMetadata(){
   $('download-original').textContent=`下载 ${original} ↗`;
   if(o.kind==='labels')renderLabels();
   if(o.kind==='volume'){
+    state.customSamples=m.grid.shape_tzyx.slice(1).reverse().map(n=>Math.min(n,128));
+    AXIS_KEYS.forEach((axis,i)=>{const input=$('sample-count-'+axis);input.max=m.grid.shape_tzyx[3-i];input.value=state.customSamples[i];});
+    updateSamplingSummary();
     const nt=m.grid.shape_tzyx[0];$('time-field').hidden=nt<=1;
     $('time-step').replaceChildren(...Array.from({length:nt},(_,i)=>{const option=el('option',`T = ${i}`);option.value=i;return option;}));
   }
 }
 async function loadPreview(){
-  if(!state.object)return;
+  if(!state.object||!state.meta)return;
   if(!scene){showError(rendererError||'WebGL 2 三维显示不可用');$('render-status').textContent='三维渲染不可用';return;}
   const request=beginPreviewRequest();
   try{
     if(state.object.kind==='volume'&&$('quality').value==='full')scene.checkFullVolume(state.meta.grid.shape_tzyx.slice(1));
-    const query=`?quality=${$('quality').value}&time=${$('time-step').value||0}&label=${state.selectedLabel||0}&retention=${$('retention').value}`;
+    const custom=state.object.kind==='volume'&&$('quality').value==='custom';
+    if(custom)scene.checkFullVolume(state.customSamples.slice().reverse(),'自定义抽样');
+    const query=`?quality=${$('quality').value}&time=${$('time-step').value||0}&label=${state.selectedLabel||0}&retention=${$('retention').value}${custom?'&samples='+state.customSamples.join(','):''}`;
     const packet=await requestPreview(objectUrl('preview')+query,state.abort.signal,parsePacket);
     if(!isCurrentPreview(request))return;
     applyPreviewPacket(packet,request.previousScalar);
@@ -183,7 +189,7 @@ function configurePreviewKind(packet) {
   const meta = packet.meta;
   if (meta.kind === 'volume') {
     setupVolume(meta);
-    $('render-status').textContent = `3D ${meta.full_resolution?'全分辨率':'预览'} ${meta.sample_shape_zyx.slice().reverse().join(' × ')} · 二维切片为原始分辨率`;
+    $('render-status').textContent = `3D ${meta.custom_sampling?'自定义':meta.full_resolution?'全分辨率':'预览'} ${meta.sample_shape_zyx.slice().reverse().join(' × ')} · ${fmt(meta.sample_shape_zyx.reduce((a,b)=>a*b,1))} 体素 · 二维切片为原始分辨率`;
     $('preview-note').textContent = meta.approximation+' CT 二维切片保持原始分辨率，定位读数来自原始数值。';
     return;
   }
@@ -441,7 +447,20 @@ async function watchImport(job){
 
 $('dataset-select').onchange=switchDataset;$('search').oninput=renderList;$('show-hidden').onchange=renderList;
 document.querySelectorAll('#type-filters button').forEach(button=>button.onclick=()=>{state.filter=button.dataset.kind;document.querySelectorAll('#type-filters button').forEach(b=>b.classList.toggle('active',b===button));renderList();});
-$('quality').onchange=loadPreview;$('time-step').onchange=loadPreview;
+function updateSamplingSummary(){
+  if(state.object?.kind!=='volume'||!state.meta)return;
+  try{
+    const counts=customSampleCounts(state.meta.grid.shape_tzyx.slice(1),AXIS_KEYS.map(axis=>$('sample-count-'+axis).value)),total=counts.reduce((a,b)=>a*b,1);
+    const pending=counts.some((n,i)=>n!==state.customSamples[i]);
+    $('sample-count-summary').textContent=`${pending?'待应用':'当前设置'}：${counts.join(' × ')}，共 ${fmt(total)} 体素。8 位纹理约 ${(total/1024**2).toFixed(2)} MiB，不含其他内存。`;
+    $('apply-sampling').disabled=false;return counts;
+  }catch(error){$('sample-count-summary').textContent=error.message;$('apply-sampling').disabled=true;}
+}
+function updateQualityFields(){const volume=state.object?.kind==='volume';$('custom-sampling').hidden=!volume||$('quality').value!=='custom';$('full-resolution-note').hidden=!volume||$('quality').value!=='full';}
+function applySampling(){const counts=updateSamplingSummary();if(!counts)return;state.customSamples=counts;updateSamplingSummary();loadPreview();}
+$('apply-sampling').onclick=applySampling;
+for(const axis of AXIS_KEYS){const input=$('sample-count-'+axis);input.oninput=updateSamplingSummary;input.onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();applySampling();}};}
+$('quality').onchange=()=>{updateQualityFields();updateSamplingSummary();loadPreview();};$('time-step').onchange=loadPreview;
 $('retention').oninput=()=>{$('retention-value').textContent=$('retention').value+'%';};$('retention').onchange=loadPreview;
 $('download-preview').onclick=exportPreview;
 function updateSectionDisplay(){

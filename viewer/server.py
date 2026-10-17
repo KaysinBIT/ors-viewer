@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 import webbrowser
 
 import numpy as np
-from .preview import PreviewCache, safe_file, unit_of
+from .preview import PreviewCache, safe_file, unit_of, parse_sample_counts
 from .slices import slice_packet, voxel_value
 from .alignment import dataset_alignment, save_alignment
 from .reslice import geometry as reslice_geometry, reslice_packet, reslice_probe
@@ -166,7 +166,7 @@ def handler(catalog, cache, token, imports=None, workspace=None):
             try:
                 url = urlsplit(self.path);route = unquote(url.path);q = parse_qs(url.query)
                 if route == '/api/catalog': return self.json({'datasets': catalog.public()})
-                if route == '/api/health': return self.json({'ok': True, 'version': '1.2.0RC5'})
+                if route == '/api/health': return self.json({'ok': True, 'version': '1.2.0RC6'})
                 if route == '/api/settings':
                     return self.json(workspace.public() if workspace else {'ready': True, 'data_directory': None, 'message': ''})
                 parts = route.strip('/').split('/')
@@ -205,8 +205,10 @@ def handler(catalog, cache, token, imports=None, workspace=None):
                                              int(q.get('time', ['0'])[0])))
             if action == 'preview':
                 if active_cache is None: raise ValueError('请先设置数据目录')
-                path = active_cache.get(folder, meta, q.get('quality', ['balanced'])[0],
-                                 int(q.get('time', ['0'])[0]), int(q.get('label', ['0'])[0]), float(q.get('retention', ['100'])[0]))
+                quality = q.get('quality', ['balanced'])[0]
+                counts = parse_sample_counts(q.get('samples', [''])[0]) if quality == 'custom' else None
+                path = active_cache.get(folder, meta, quality,
+                                 int(q.get('time', ['0'])[0]), int(q.get('label', ['0'])[0]), float(q.get('retention', ['100'])[0]), sample_counts=counts)
                 return self.file(path)
             if action == 'table':
                 return self.json(table_data(folder, meta, q.get('group', [''])[0],

@@ -15,3 +15,6 @@
 .alignment-buttons button { padding: 6px 9px; font-size: 12px; }
 .alignment-angle .range-field { margin-bottom: 2px; }
 .alignment-status { min-height: 36px; overflow-wrap: anywhere; }
+.sample-counts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.sample-counts label { display: grid; gap: 5px; font-size: 12px; }
+.sample-counts input { width: 100%; min-width: 0; }

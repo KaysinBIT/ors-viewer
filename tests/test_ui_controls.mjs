@@ -6,7 +6,15 @@ import {requestJson,requestPreview,requestErrorMessage} from '../viewer/web/data
 import {viewHarness} from './view_harness.mjs';
 import {createPreviewPLY} from '../viewer/web/export-ply.js';
 import {bindRangeNumber} from '../viewer/web/number-control.js';
-import {validateFullVolume} from '../viewer/web/volume-quality.js';
+import {validateFullVolume,customSampleCounts} from '../viewer/web/volume-quality.js';
+
+test('manual XYZ sample counts validate exact integers against ZYX dimensions',()=>{
+  assert.deepEqual(customSampleCounts([1024,1016,1004],['256','192','128']),[256,192,128]);
+  assert.deepEqual(customSampleCounts([1,2,3],['3','2','1']),[3,2,1]);
+  for(const values of [['','2','3'],['0','2','3'],['1.5','2','3'],['NaN','2','3'],['9','2','3'],['1','7','3'],['1','2','6']])assert.throws(()=>customSampleCounts([5,6,8],values));
+  assert.throws(()=>customSampleCounts([2048,2048,2048],['2048','2048','2048']),/2 GiB/);
+  assert.throws(()=>validateFullVolume([512,64,64],256,'自定义抽样'),/自定义抽样.*上限 256/);
+});
 
 test('full volume preflight rejects hardware and buffer limits without choosing another quality',()=>{
   assert.equal(validateFullVolume([1024,1016,1004],2048),1044545536);

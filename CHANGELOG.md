@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.0RC6 (local update candidate)
+
+- Add explicit per-axis XYZ volume sampling counts, an Apply action, sample totals and texture-size estimates. Retain fast/balanced/fine and full-resolution modes.
+- Uniformly select exactly the requested number of source voxels, including axis endpoints (center for a single sample), without changing world bounds, source arrays or original 2D slices.
+- Stream custom textures in bounded chunks, separate caches by counts/time, and reject invalid counts or resource limits without silently changing the selection.
+- Preserve bundled Tk desktop validation; extend numerical, HTTP and frontend-state coverage and the offline manual.
+
 ## 1.2.0RC5 (local update candidate)
 
 - Rebuild the Windows desktop package with tkinter and Tcl/Tk included. Fail the build if desktop dependencies are unavailable; verify the actual frozen launcher widgets and manual service start/stop before producing a ZIP.

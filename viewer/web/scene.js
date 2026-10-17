@@ -197,7 +197,7 @@ export class SceneView {
   }
 
   load(packet) {
-    if(packet.meta.kind==='volume'&&packet.meta.full_resolution)this.checkFullVolume(packet.meta.sample_shape_zyx);
+    if(packet.meta.kind==='volume'&&(packet.meta.full_resolution||packet.meta.custom_sampling))this.checkFullVolume(packet.meta.sample_shape_zyx,packet.meta.custom_sampling?'自定义抽样':'全分辨率');
     this.clear();this.packet = packet;
     const { meta, arrays } = packet;
     let bounds;
@@ -268,7 +268,7 @@ export class SceneView {
     return null;
   }
 
-  checkFullVolume(shape){const gl=this.renderer.getContext();return validateFullVolume(shape,gl.getParameter(gl.MAX_3D_TEXTURE_SIZE));}
+  checkFullVolume(shape,label){const gl=this.renderer.getContext();return validateFullVolume(shape,gl.getParameter(gl.MAX_3D_TEXTURE_SIZE),label);}
 
   addVolume(meta, arrays) {
     const [nz,ny,nx] = meta.sample_shape_zyx;
@@ -276,17 +276,17 @@ export class SceneView {
     texture.format=THREE.RedFormat;texture.type=THREE.UnsignedByteType;
     texture.minFilter=THREE.LinearFilter;texture.magFilter=THREE.LinearFilter;
     texture.unpackAlignment=1;texture.needsUpdate=true;
-    if(meta.full_resolution){
+    if(meta.full_resolution||meta.custom_sampling){
       const gl=this.renderer.getContext();
       try{
         if(gl.isContextLost())throw new Error('显卡绘图上下文已丢失，请刷新页面后重试');
         this.renderer.initTexture(texture);
-        if(gl.getError()!==gl.NO_ERROR)throw new Error('全分辨率纹理上传失败，显存可能不足。请手动选择其他预览精度；没有自动降采样。');
+        if(gl.getError()!==gl.NO_ERROR)throw new Error('三维纹理上传失败，显存可能不足。请手动减少抽样数或选择其他预览精度；没有自动降采样。');
       }catch(error){texture.dispose();throw error;}
     }
     const common = {uData:{value:texture},uWindow:{value:new THREE.Vector2(0,1)},uOpacity:{value:1},uClipEnabled:{value:false},uClipPlane:{value:new THREE.Vector4()}};
     const material = new THREE.ShaderMaterial({ glslVersion:THREE.GLSL3,side:THREE.BackSide,transparent:true,
-      uniforms:{...common,uTextureSize:{value:new THREE.Vector3(nx,ny,nz)},uMode:{value:0},uTint:{value:new THREE.Color(this.theme.mesh)},uIso:{value:.5},uSteps:{value:200},uFullResolution:{value:!!meta.full_resolution},uOrthographic:{value:false},uCameraDirection:{value:new THREE.Vector3(0,0,-1)}},
+      uniforms:{...common,uTextureSize:{value:new THREE.Vector3(nx,ny,nz)},uMode:{value:0},uTint:{value:new THREE.Color(this.theme.mesh)},uIso:{value:.5},uSteps:{value:200},uFullResolution:{value:!!(meta.full_resolution||meta.custom_sampling)},uOrthographic:{value:false},uCameraDirection:{value:new THREE.Vector3(0,0,-1)}},
       vertexShader:volumeVertex,fragmentShader:volumeFragment,depthWrite:false });
     const matrix=new THREE.Matrix4().set(...meta.matrix.flat());
     const volume=new THREE.Mesh(new THREE.BoxGeometry(1,1,1),material);

@@ -9,7 +9,7 @@ import threading
 import numpy as np
 from .affine import transform_points
 
-QUALITY = {'fast': 64, 'balanced': 112, 'fine': 176, 'full': None}
+QUALITY = {'fast': 64, 'balanced': 112, 'fine': 176, 'full': None, 'custom': None}
 PREVIEW_VERSION = 4
 MAX_FULL_VOLUME_BYTES = 2**31 - 1
 VOLUME_CHUNK_VOXELS = 1_048_576
@@ -319,33 +319,78 @@ def volume_preview(folder, meta, resolution, time_step=0):
     return packet(volume_metadata(data, meta, texture.shape, time_step, [lo, hi], limits), {'volume': texture})
 
 
-def full_volume_preview(folder, meta, destination, time_step=0):
-    """Stream every voxel to the cache without allocating a full float volume.
+def parse_sample_counts(value):
+    try:
+        parts = value.split(',')
+        if len(parts) != 3 or any(not p.strip().isascii() or not p.strip().isdigit() for p in parts): raise ValueError
+        return tuple(int(p) for p in parts)
+    except (AttributeError, ValueError):
+        raise ValueError('自定义抽样须提供 X、Y、Z 三个正整数') from None
 
-    Spatial resolution is exact; like the other display modes, intensities use
-    an 8-bit texture. Only the initial window estimate uses sampled statistics.
+
+def validate_sample_counts(counts, shape):
+    if not isinstance(counts, (tuple, list)) or len(counts) != 3 or any(type(n) is not int or n <= 0 for n in counts):
+        raise ValueError('自定义抽样须提供 X、Y、Z 三个正整数')
+    if len(shape) != 4 or any(n > size for n, size in zip(counts, shape[:0:-1])):
+        raise ValueError('各轴抽样数不能超过原始体素数量')
+    if math.prod(counts) > MAX_FULL_VOLUME_BYTES:
+        raise ValueError('自定义抽样的 8 位纹理超过 2 GiB 限制，请手动减少抽样数')
+    return tuple(counts)
+
+
+def sample_indices(size, count, positions):
+    # Include both ends; a one-sample axis uses its central source voxel.
+    if count == 1: return np.full_like(positions, (size-1)//2, dtype=np.int64)
+    return np.rint(positions * ((size-1)/(count-1))).astype(np.int64)
+
+
+def full_volume_preview(folder, meta, destination, time_step=0):
+    return write_volume_preview(folder, meta, destination, time_step)
+
+
+def write_volume_preview(folder, meta, destination, time_step=0, sample_counts=None):
+    """Stream full or explicitly sampled voxels with bounded working memory.
+
+    Custom counts are XYZ; array and packet dimensions remain ZYX. Only the
+    initial window estimate uses fewer samples than the requested texture.
     """
     data = array(folder, 'volume.npy')
     if data.ndim != 4 or not 0 <= time_step < data.shape[0] or any(n <= 0 for n in data.shape):
         raise ValueError('体数据或时间步无效')
-    size = math.prod(data.shape[1:])
+    if sample_counts is not None: sample_counts = validate_sample_counts(sample_counts, data.shape)
+    shape = tuple(reversed(sample_counts)) if sample_counts is not None else data.shape[1:]
+    size = math.prod(shape)
     if size > MAX_FULL_VOLUME_BYTES:
         raise ValueError('全分辨率 8 位纹理超过 2 GiB 的单纹理限制；请手动选择其他预览精度。没有自动降采样。')
     def chunks():
-        return np.nditer(data[time_step], flags=['external_loop', 'buffered'], order='C',
-                         op_dtypes=['float32'], casting='unsafe', buffersize=VOLUME_CHUNK_VOXELS)
+        if sample_counts is None:
+            yield from np.nditer(data[time_step], flags=['external_loop', 'buffered'], order='C',
+                                op_dtypes=['float32'], casting='unsafe', buffersize=VOLUME_CHUNK_VOXELS)
+            return
+        nz, ny, nx = shape
+        for start in range(0, size, VOLUME_CHUNK_VOXELS):
+            offsets = np.arange(start, min(start+VOLUME_CHUNK_VOXELS, size))
+            z = sample_indices(data.shape[1], nz, offsets//(ny*nx))
+            y = sample_indices(data.shape[2], ny, (offsets//nx)%ny)
+            x = sample_indices(data.shape[3], nx, offsets%nx)
+            yield np.asarray(data[time_step, z, y, x], dtype='float32')
     lo, hi = math.inf, -math.inf
     for block in chunks():
         valid = block[np.isfinite(block)]
         if len(valid): lo, hi = min(lo, float(valid.min())), max(hi, float(valid.max()))
     if not math.isfinite(lo): raise ValueError('体数据没有有限数值')
-    axes = sampling_axes(data.shape[1:], QUALITY['balanced'])
+    axes = sampling_axes(shape, QUALITY['balanced'])
+    if sample_counts is not None:
+        axes = [sample_indices(n, count, indices) for n, count, indices in zip(data.shape[1:], shape, axes)]
     sample = np.asarray(data[time_step][np.ix_(*axes)], dtype='float32')
     valid = sample[np.isfinite(sample)]
     limits = np.percentile(valid, [20, 99.5]).tolist() if len(valid) else [lo, hi]
     if limits[1] <= limits[0]: limits = [lo, max(hi, lo + 1)]
-    info = volume_metadata(data, meta, data.shape[1:], time_step, [lo, hi], limits, full=True)
-    descriptors = {'volume': {'dtype': '|u1', 'shape': list(data.shape[1:]), 'offset': 0, 'bytes': size}}
+    info = volume_metadata(data, meta, shape, time_step, [lo, hi], limits, full=tuple(shape)==tuple(data.shape[1:]))
+    if sample_counts is not None:
+        info.update(custom_sampling=True, requested_samples_xyz=list(sample_counts),
+                    approximation='按指定 XYZ 数量均匀抽取原始体素；8 位显示纹理，默认窗口按抽样估计。原始 NPY 和二维三切面分辨率不变。')
+    descriptors = {'volume': {'dtype': '|u1', 'shape': list(shape), 'offset': 0, 'bytes': size}}
     try:
         with destination.open('wb') as stream:
             stream.write(packet_header(info, descriptors))
@@ -364,17 +409,23 @@ class PreviewCache:
         self.directory.mkdir(parents=True, exist_ok=True)
         self.lock = threading.Lock()
 
-    def get(self, folder, meta, quality='balanced', time_step=0, label_id=0, retention=100):
+    def get(self, folder, meta, quality='balanced', time_step=0, label_id=0, retention=100, sample_counts=None):
         if quality not in QUALITY:
             raise ValueError('无效预览精度')
-        if quality == 'full' and meta['type'] != 'CxvChannel':
-            raise ValueError('全分辨率体纹理仅支持体数据；网格默认保留全部三角面')
+        if quality in ('full', 'custom') and meta['type'] != 'CxvChannel':
+            raise ValueError('全分辨率与自定义体纹理仅支持体数据；网格默认保留全部三角面')
+        if quality == 'custom':
+            source = array(folder, 'volume.npy')
+            sample_counts = validate_sample_counts(sample_counts, source.shape)
+            del source
         if meta['type'] == 'CxvFaceVertexMesh': quality = 'balanced'  # Quality only controls volume/label sampling.
         if not math.isfinite(retention) or not 1 <= retention <= 100:
             raise ValueError('保留比例须在 1–100% 之间')
         stamp = [(p.name, p.stat().st_size, p.stat().st_mtime_ns) for p in folder.iterdir()
                  if p.is_file() and p.suffix in ('.npy', '.json')]
-        key = hashlib.sha256(json.dumps([PREVIEW_VERSION, str(folder), sorted(stamp), quality, time_step, label_id]).encode()).hexdigest()
+        cache_key = [PREVIEW_VERSION, str(folder), sorted(stamp), quality, time_step, label_id]
+        if quality == 'custom': cache_key.append(sample_counts)
+        key = hashlib.sha256(json.dumps(cache_key).encode()).hexdigest()
         if meta['type'] == 'CxvFaceVertexMesh':
             target = self.directory / (key + '-mesh-r' + str(float(retention)) + '.bin')
             with self.lock:
@@ -396,9 +447,9 @@ class PreviewCache:
         if not target.exists():
             with self.lock:
                 if not target.exists():
-                    if quality == 'full':
+                    if quality in ('full', 'custom'):
                         temporary = target.with_suffix('.partial')
-                        full_volume_preview(folder, meta, temporary, time_step)
+                        write_volume_preview(folder, meta, temporary, time_step, sample_counts if quality=='custom' else None)
                         temporary.replace(target)
                         return target
                     resolution = QUALITY[quality]

@@ -15,7 +15,7 @@ import time
 from unittest.mock import patch
 
 import numpy as np
-from viewer.preview import packet, sample_labels, label_preview, mesh_preview, volume_preview, full_volume_preview, PreviewCache, safe_file, controlled_mesh
+from viewer.preview import packet, sample_labels, label_preview, mesh_preview, volume_preview, full_volume_preview, write_volume_preview, parse_sample_counts, validate_sample_counts, sample_indices, PreviewCache, safe_file, controlled_mesh
 from viewer.server import Catalog, handler, table_data
 from viewer.imports import ImportJobs, import_standard, validate_source
 from viewer.simplify import simplify_packet
@@ -115,6 +115,53 @@ class ViewerTests(unittest.TestCase):
         np.save(self.work/'volume.npy',np.full((1,2,3,4),np.nan,dtype='<f4'))
         with self.assertRaisesRegex(ValueError,'没有有限数值'):full_volume_preview(self.work,meta,output)
         self.assertFalse(output.exists())
+
+    def test_custom_samples_have_exact_counts_endpoints_and_unchanged_coordinates(self):
+        for order in ('C','F'):
+            data=np.array(np.arange(2*5*6*8).reshape(2,5,6,8),dtype='<f4',order=order)
+            np.save(self.work/'volume.npy',data);before=(self.work/'volume.npy').read_bytes()
+            meta={'type':'CxvChannel','grid':{'voxel_xyz_to_world':[[2,.2,0,80],[0,3,0,-40],[0,0,4,10],[0,0,0,1]]}}
+            for counts,axes in [([3,4,2],([0,4],[0,2,3,5],[0,4,7])),([1,1,1],([2],[2],[3])),([8,6,5],(range(5),range(6),range(8)))]:
+                output=self.work/'custom.bin'
+                with patch('viewer.preview.VOLUME_CHUNK_VOXELS',7):write_volume_preview(self.work,meta,output,1,counts)
+                header,arrays=unpack(output.read_bytes());sample=data[1][np.ix_(*axes)]
+                lo,hi=float(sample.min()),float(sample.max())
+                expected=np.clip((sample-lo)/max(hi-lo,1e-20)*255,0,255).astype('u1')
+                np.testing.assert_array_equal(arrays['volume'],expected)
+                self.assertEqual(header['sample_shape_zyx'],counts[::-1]);self.assertEqual(header['requested_samples_xyz'],counts)
+                self.assertTrue(header['custom_sampling']);self.assertEqual(header['time_step'],1)
+                reference=unpack(volume_preview(self.work,meta,8,1))[0]
+                self.assertEqual(header['matrix'],reference['matrix']);self.assertEqual(header['original_shape_tzyx'],list(data.shape))
+            self.assertEqual(before,(self.work/'volume.npy').read_bytes())
+
+    def test_custom_sampling_validation_and_cache_keys_include_counts_and_time(self):
+        shape=(2,5,6,8);np.save(self.work/'volume.npy',np.arange(np.prod(shape),dtype='<u2').reshape(shape))
+        meta={'type':'CxvChannel','grid':{}};cache=PreviewCache(self.work/'cache')
+        first=cache.get(self.work,meta,'custom',sample_counts=[3,4,2])
+        self.assertEqual(first,cache.get(self.work,meta,'custom',sample_counts=[3,4,2]))
+        self.assertNotEqual(first,cache.get(self.work,meta,'custom',sample_counts=[4,3,2]))
+        self.assertNotEqual(first,cache.get(self.work,meta,'custom',1,sample_counts=[3,4,2]))
+        self.assertEqual(parse_sample_counts('3,4,2'),(3,4,2))
+        for bad in (None,'','1,2','1,2,3,4','1.5,2,3','-1,2,3','NaN,2,3','１２,2,3'):
+            with self.assertRaises(ValueError):parse_sample_counts(bad)
+        for bad in (None,[],[0,2,3],[9,2,3],[1,7,3],[1,2,6],[True,2,3],[1.5,2,3]):
+            with self.assertRaises(ValueError):validate_sample_counts(bad,shape)
+        with patch('viewer.preview.MAX_FULL_VOLUME_BYTES',10):
+            with self.assertRaisesRegex(ValueError,'2 GiB'):validate_sample_counts([3,3,3],shape)
+        with self.assertRaises(ValueError):cache.get(self.work,{'type':'CxvLabeledMultiROI'},'custom',sample_counts=[1,1,1])
+
+    def test_custom_sampling_http_returns_requested_shape_and_rejects_bad_input(self):
+        np.save(self.work/'volume.npy',np.arange(2*5*6*8,dtype='<u2').reshape(2,5,6,8))
+        (self.work/'metadata.json').write_text(json.dumps({'type':'CxvChannel','grid':{}}))
+        catalog=Catalog();catalog.objects={'v':self.work}
+        server=ThreadingHTTPServer(('127.0.0.1',0),handler(catalog,PreviewCache(self.work/'cache'),'token'))
+        threading.Thread(target=server.serve_forever,daemon=True).start();self.addCleanup(server.server_close);self.addCleanup(server.shutdown)
+        url=f'http://127.0.0.1:{server.server_port}/api/objects/v/preview?quality=custom'
+        with urllib.request.urlopen(url+'&samples=3,4,2&time=1') as response:header,arrays=unpack(response.read())
+        self.assertEqual(arrays['volume'].shape,(2,4,3));self.assertEqual(header['requested_samples_xyz'],[3,4,2])
+        for query in ('','&samples=0,2,3','&samples=9,2,3','&samples=1.5,2,3'):
+            with self.assertRaises(urllib.error.HTTPError) as error:urllib.request.urlopen(url+query)
+            self.assertEqual(error.exception.code,400);error.exception.close()
 
     def test_mesh_preview_removes_degeneracy_and_preserves_bounds(self):
         v = np.array([[0,0,0],[1,0,0],[0,1,0],[0,0,1]], dtype='<f4');f = np.array([[0,1,2],[0,1,3],[0,2,3],[1,2,3]],dtype='<u4')
