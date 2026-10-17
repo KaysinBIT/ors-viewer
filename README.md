@@ -4,9 +4,9 @@
 
 使用说明：[PDF 说明书](viewer/web/manual.pdf) · [网页版说明书源文件](viewer/web/manual.html)。运行软件后也可点击右上角“使用说明”，离线阅读全部操作步骤。
 
-当前公开候选版为 [1.2.0RC6](https://github.com/KaysinBIT/ors-viewer/releases/tag/v1.2.0RC6)：增加自定义 XYZ 抽样数量，并包含 RC3–RC5 的姿态切面修复、并发崩溃修复、精确角度、鼠标中心缩放、全分辨率预览及桌面依赖修订。本次 RC3–RC6 的累计改动见[中文更新日志](CHANGELOG.md)；更早版本另见[此前版本记录](RELEASE_HISTORY.md)。浏览器 / GPU 视觉验收尚未完成，本版使用 RC 候选版本号；[1.1.0 正式版](https://github.com/KaysinBIT/ors-viewer/releases/tag/v1.1.0)仍可下载。
+当前公开候选版为 [1.2.0RC6](https://github.com/KaysinBIT/ors-viewer/releases/tag/v1.2.0RC6)：增加自定义 XYZ 抽样数量，并整合此前未独立发布的姿态切面修复、并发崩溃修复、精确角度、鼠标中心缩放、全分辨率预览及桌面依赖修订。RC6 的累计改动按新增功能、问题修复和性能优化整理，详见[中文更新日志](CHANGELOG.md)；更早版本另见[此前版本记录](RELEASE_HISTORY.md)。浏览器 / GPU 视觉验收尚未完成，本版使用 RC 候选版本号；[1.1.0 正式版](https://github.com/KaysinBIT/ors-viewer/releases/tag/v1.1.0)仍可下载。
 
-RC5 Windows 修订包补齐 tkinter / Tcl/Tk 桌面依赖；构建必须通过真实启动窗口和手动启动 / 停止服务检查，不再仅用无界面服务测试作为打包验收。
+Windows 版补齐 tkinter / Tcl/Tk 桌面依赖；构建必须通过真实启动窗口和手动启动 / 停止服务检查，不再仅用无界面服务测试作为打包验收。
 
 ## 功能
 

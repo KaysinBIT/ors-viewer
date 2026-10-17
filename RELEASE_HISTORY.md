@@ -1,6 +1,6 @@
 # ORS Viewer 此前版本记录
 
-本文保留 RC2 及更早的版本记录。本次 RC3–RC6 的累计更新见 [CHANGELOG.md](CHANGELOG.md)。
+本文保留 RC2 及更早的版本记录。RC6 的累计更新见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 1.2.0RC2 — 历史公开版本
 
