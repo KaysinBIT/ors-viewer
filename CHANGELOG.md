@@ -2,6 +2,7 @@
 
 ## 1.2.0RC5 (local update candidate)
 
+- Rebuild the Windows desktop package with tkinter and Tcl/Tk included. Fail the build if desktop dependencies are unavailable; verify the actual frozen launcher widgets and manual service start/stop before producing a ZIP.
 - Add synchronized numeric azimuth/elevation inputs with fractional degrees and range validation.
 - Add cursor-centered Ctrl + wheel zoom to each CT, aligned and mesh section, in four-pane and maximized layouts. Keep ordinary wheel slice navigation.
 - Reduce aligned CT interpolation temporaries and skip empty pixels, preserving full-resolution pixels, masks and zero-weight NaN behavior. Retain BLAS-free concurrent computation.

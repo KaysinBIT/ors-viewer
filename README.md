@@ -6,6 +6,8 @@
 
 当前源码为 1.2.0RC5 本地更新候选版：增加剖面角度输入框、以鼠标为中心的 Ctrl + 滚轮缩放、体数据全分辨率预览选项，并优化初始姿态变换后的 CT 切片采样。保留 RC4 的并发崩溃修复与完整模型显示。公开预发行版仍为 [1.2.0RC2](https://github.com/KaysinBIT/ors-viewer/releases/tag/v1.2.0RC2)，稳定版为 1.1.0。候选版尚未完成浏览器 / GPU 页面复测。
 
+RC5 Windows 修订包补齐 tkinter / Tcl/Tk 桌面依赖；构建必须通过真实启动窗口和手动启动 / 停止服务检查，不再仅用无界面服务测试作为打包验收。
+
 ## 功能
 
 - 导入 `.ORSSession`、`.ORSObject`、二进制/ASCII `.STL` 和三维/四维数值 `.NPY`。

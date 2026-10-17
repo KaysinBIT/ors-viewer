@@ -68,13 +68,14 @@ class LaunchSession:
         self.url = ''
 
 
-def desktop(args, version, on_ready=None):
+def desktop(args, version, on_ready=None, *, _on_window_ready=None):
     import tkinter as tk
     from tkinter import filedialog, ttk
     from ors_viewer import open_directory
 
     session = LaunchSession(args, on_ready)
     window = tk.Tk()
+    if _on_window_ready is not None: window.withdraw()  # Package smoke test uses the real widgets without showing a window.
     window.title('ORS Viewer · v' + version)
     window.geometry('780x640')
     window.minsize(760, 620)
@@ -212,6 +213,7 @@ def desktop(args, version, on_ready=None):
     window.protocol('WM_DELETE_WINDOW', close)
     controls()
     try:
+        if _on_window_ready is not None: window.after(0, lambda: _on_window_ready(window, session))
         window.mainloop()
     finally:
         session.stop()

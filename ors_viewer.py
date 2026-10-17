@@ -29,6 +29,9 @@ def open_directory(path):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
+    if len(argv) == 2 and argv[0] == '--check-desktop':
+        from viewer.desktop_check import check_desktop
+        return check_desktop(Path(argv[1]), VERSION)
     if argv[:1] == ['--worker-extract']:
         # The same bundled executable handles parsing without an external Python install.
         if sys.stdout is None: sys.stdout = open(os.devnull, 'w')
